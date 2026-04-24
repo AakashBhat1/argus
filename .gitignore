@@ -73,16 +73,9 @@ backend/yolo_classifier/*.safetensors
 backend/yolo_classifier/models/
 backend/yolo_classifier/intrusion_monitor/roi_events.jsonl
 
-# Chatbot local/runtime artifacts
-chatbot/.env
-chatbot/project/data/checkpoint.json
-chatbot/project/data/faiss.index*
-chatbot/project/data/documents.pkl*
-chatbot/project/data/embeddings.npy*
-chatbot/project/data/*.npy
-chatbot/project/data/*.npz
-chatbot/project/data/*.bak
-chatbot/models/
+# Chatbot service — deferred, not deployed with argus (2026-04-25).
+# Entire directory excluded from the repo. Kept locally for future re-enable.
+chatbot/
 
 # Universal ML model weights & caches (any location)
 *.safetensors

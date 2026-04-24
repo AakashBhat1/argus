@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
 const backendOrigin =
   process.env.NEXT_PRIVATE_BACKEND_URL || "http://localhost:8000";
-const chatbotOrigin =
-  process.env.NEXT_PRIVATE_CHATBOT_URL || "http://localhost:8001";
 
 const path = require("path");
 
@@ -19,14 +17,6 @@ const nextConfig = {
       {
         source: "/api/:path*",
         destination: `${backendOrigin}/api/:path*`,
-      },
-      {
-        source: "/chat",
-        destination: `${chatbotOrigin}/chat`,
-      },
-      {
-        source: "/health/chatbot",
-        destination: `${chatbotOrigin}/health`,
       },
     ];
   },

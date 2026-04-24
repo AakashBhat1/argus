@@ -1,13 +1,9 @@
 # ── Named volumes ─────────────────────────────────────────────────────────────
-# roi_events_data  – shared between backend (writer) and chatbot (reader)
-# chatbot_data     – FAISS index + documents persisted across restarts
+# roi_events_data  – ROI event jsonl written by backend (kept for future consumers)
 # models_data      – OpenVINO model files (mount or pre-populate externally)
 # postgres_data    – Postgres database files (surveillance DB)
-# chatbot_embedding_models – embedding model files (HuggingFace uses HF_HOME); set EMBEDDING_LOCAL_FILES_ONLY=1 for offline
 volumes:
   roi_events_data:
-  chatbot_data:
-  chatbot_embedding_models:
   models_data:
   postgres_data:
 
@@ -34,53 +30,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-
-  # ── Chatbot ──────────────────────────────────────────────────────────────────
-  # Independent chatbot API service.
-  chatbot:
-    build:
-      context: ./chatbot
-      dockerfile: Dockerfile
-    container_name: intruder-chatbot
-    restart: unless-stopped
-    ports:
-      - "8001:8001"
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      # Block 5 DB-first ingestion (jsonl remains available as rollback mode)
-      INGESTION_SOURCE: postgres
-      # Database for chatbot ROI event ingestion (direct read path)
-      CHATBOT_DATABASE_URL: ${CHATBOT_DATABASE_URL:-postgresql+psycopg2://surveillance:surveillance@db:5432/surveillance}
-      # Tenant scope until chat request propagates tenant context end-to-end.
-      CHATBOT_TENANT_ID: "1"
-      # Path inside the container where roi_events.jsonl is written by the backend
-      ROI_EVENTS_PATH: /app/roi_events/roi_events.jsonl
-      # Where to store/load the embedding model (HuggingFace reads HF_HOME); any folder works
-      HF_HOME: /app/models/embedding
-      # Embedding: "0" = allow download on first run; "1" = use only local files (set after first run for offline)
-      EMBEDDING_LOCAL_FILES_ONLY: "${EMBEDDING_LOCAL_FILES_ONLY:-0}"
-      # How often (seconds) the ingestion worker polls for new events
-      INGESTION_INTERVAL_SECONDS: "5"
-      # Flush FAISS index to disk every N seconds or M new documents
-      VECTOR_FLUSH_INTERVAL_SECONDS: "60"
-      VECTOR_FLUSH_DOC_THRESHOLD: "1000"
-    volumes:
-      # Shared with backend so the chatbot can read roi_events.jsonl
-      - roi_events_data:/app/roi_events
-      # Persist FAISS index + documents between container restarts
-      - chatbot_data:/app/project/data
-      # Persist embedding model so it is reused (use EMBEDDING_LOCAL_FILES_ONLY=1 after first run)
-      - chatbot_embedding_models:/app/models/embedding
-    healthcheck:
-      test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
-      interval: 15s
-      timeout: 10s
-      # First run can download embedding model from HuggingFace; allow time to finish startup
-      start_period: 300s
-      retries: 12
 
   # ── Backend API ───────────────────────────────────────────────────────────────
   backend:
@@ -125,9 +74,7 @@ services:
         # Baked into the Next.js build; the rewrite in next.config.js proxies
         # /api/* → http://backend:8000/api/* at the server side.
         NEXT_PRIVATE_BACKEND_URL: http://backend:8000
-        NEXT_PRIVATE_CHATBOT_URL: http://chatbot:8001
         NEXT_PUBLIC_API_URL: /api/v1
-        NEXT_PUBLIC_CHATBOT_URL: /chat
     container_name: intruder-frontend
     restart: unless-stopped
     ports:
@@ -135,9 +82,7 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PRIVATE_BACKEND_URL: http://backend:8000
-      NEXT_PRIVATE_CHATBOT_URL: http://chatbot:8001
       NEXT_PUBLIC_API_URL: /api/v1
-      NEXT_PUBLIC_CHATBOT_URL: /chat
     depends_on:
       backend:
         condition: service_healthy

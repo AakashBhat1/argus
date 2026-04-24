@@ -1,2 +1,0 @@
-"""Terminal chatbot package."""
-

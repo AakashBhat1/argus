@@ -1,7 +1,6 @@
 "use client";
 
 import Sidebar from "@/components/Sidebar";
-import Chatbot from "@/components/Chatbot";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -23,7 +22,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </main>
       </div>
-      <Chatbot />
     </ProtectedRoute>
   );
 }
