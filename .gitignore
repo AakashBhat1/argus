@@ -1,0 +1,116 @@
+# General
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Node / frontend
+node_modules/
+.parcel-cache/
+.turbo/
+.next/
+out/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS / misc
+*.log
+*.tmp
+*.temp
+a.out
+
+# Project-specific
+frontend/.next/
+frontend/.turbo/
+
+# Backend runtime and model artifacts
+backend/**/.env
+backend/**/.env.*
+!backend/**/.env.example
+
+backend/yolo_classifier/*.db
+backend/yolo_classifier/*.db-*
+backend/yolo_classifier/*.sqlite
+backend/yolo_classifier/*.sqlite-*
+backend/yolo_classifier/video/
+backend/yolo_classifier/*.pt
+backend/yolo_classifier/*.onnx
+backend/yolo_classifier/*.pth
+backend/yolo_classifier/*.safetensors
+backend/yolo_classifier/models/
+backend/yolo_classifier/intrusion_monitor/roi_events.jsonl
+
+# Chatbot local/runtime artifacts
+chatbot/.env
+chatbot/project/data/checkpoint.json
+chatbot/project/data/faiss.index*
+chatbot/project/data/documents.pkl*
+chatbot/project/data/embeddings.npy*
+chatbot/project/data/*.npy
+chatbot/project/data/*.npz
+chatbot/project/data/*.bak
+chatbot/models/
+
+# Universal ML model weights & caches (any location)
+*.safetensors
+*.onnx
+*.pth
+*.gguf
+*.ckpt
+*.h5
+*.pb
+*.tflite
+*.msgpack
+*.ot
+*.joblib
+# HuggingFace / Transformers / sentence-transformers caches
+.cache/huggingface/
+**/.cache/huggingface/
+**/hf_cache/
+**/transformers_cache/
+**/sentence_transformers_cache/
+models--*/
+
+# Local editor/environment helpers
+python.useEnvironmentsExtension
+
+# AI Agents & Documentation
+.agents/
+.claude/
+CLAUDE.md
+**/CLAUDE.md
+docs/
+backend/docs/

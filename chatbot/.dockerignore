@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+project/data/
+project/roi_events.jsonl
+*.log
+
+# Never bake model weights into the image – mount as a volume instead
+models/
+
+# Secrets
+.env
+
+.git
+.gitignore
+README.md
+DEPLOYMENT.md
+scripts/

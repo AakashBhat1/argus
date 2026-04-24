@@ -1,0 +1,15 @@
+fastapi>=0.110,<0.115
+uvicorn[standard]>=0.29,<0.31
+pydantic>=2.6,<2.9
+
+numpy>=1.26,<2.0
+faiss-cpu>=1.8.0,<1.9
+torch>=2.3,<2.6
+sentence-transformers>=3.0,<3.3
+transformers>=4.45,<4.48
+
+requests>=2.31,<2.33
+python-dotenv>=1.0,<2.0
+
+sqlalchemy>=2.0,<2.1
+psycopg2-binary>=2.9,<2.10

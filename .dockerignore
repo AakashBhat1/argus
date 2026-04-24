@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Root-level .dockerignore
+# This file applies when the Docker build context is the project root,
+# which is the case for the backend service in docker-compose.yml.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Frontend (not needed in the backend image) ────────────────────────────────
+frontend/
+frontend/.next
+frontend/node_modules
+frontend/out
+frontend/build
+
+# ── Chatbot (built separately with its own context) ───────────────────────────
+chatbot/
+
+# ── Documentation ─────────────────────────────────────────────────────────────
+docs/
+*.md
+!backend/yolo_classifier/**/*.md
+
+# ── Python caches ─────────────────────────────────────────────────────────────
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv
+venv
+env
+
+# ── Local env and DB files ────────────────────────────────────────────────────
+.env
+.env.*
+!backend/yolo_classifier/.env.example
+*.db
+surveillance.db
+
+# ── Model files (mounted as a volume at runtime) ──────────────────────────────
+backend/yolo_classifier/models
+
+# ── Generated data files (mounted as a volume at runtime) ────────────────────
+backend/yolo_classifier/intrusion_monitor/roi_events.jsonl
+
+# ── Git and IDE ───────────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+*.swp
+*.swo
+.DS_Store

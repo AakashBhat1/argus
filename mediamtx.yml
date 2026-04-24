@@ -1,0 +1,20 @@
+api: yes
+apiAddress: :9997
+
+webrtc: yes
+webrtcAddress: :8889
+
+# API credentials used by backend stream registration calls.
+authInternalUsers:
+  - user: mtx_api
+    pass: mtx_api_change_me
+    permissions:
+      - action: api
+      - action: metrics
+  - user: any
+    permissions:
+      - action: read
+      - action: publish
+
+paths:
+  all_others:

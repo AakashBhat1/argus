@@ -1,0 +1,4 @@
+## Backend requirements are centralized at the repo root.
+## This file simply reuses that list.
+
+-r ../../requirements.txt

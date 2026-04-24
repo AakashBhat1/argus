@@ -1,0 +1,370 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "project": "intrusion_monitor_nlu",
+    "description": "Configuration for intent / slot detection over ROI intrusion events.",
+    "author": "system",
+    "last_updated": "2026-03-04"
+  },
+  "object_synonyms": {
+    "person": {
+      "synonyms": [
+        "person",
+        "people",
+        "human",
+        "man",
+        "woman",
+        "intruder",
+        "trespasser",
+        "thief",
+        "stranger",
+        "visitor",
+        "worker",
+        "guard",
+        "child",
+        "kid",
+        "boy",
+        "girl",
+        "baby",
+        "teen"
+      ],
+      "category": "human",
+      "risk_level": "high",
+      "description": "Any human figure in the scene, including potential intruders, workers, and visitors."
+    },
+    "car": {
+      "synonyms": [
+        "car",
+        "vehicle",
+        "truck",
+        "van",
+        "bus",
+        "pickup",
+        "pickup truck",
+        "suv",
+        "jeep"
+      ],
+      "category": "vehicle",
+      "risk_level": "medium",
+      "description": "Motor vehicles including cars, vans, buses, and similar road vehicles."
+    },
+    "bicycle": {
+      "synonyms": [
+        "bike",
+        "bicycle",
+        "cycle"
+      ],
+      "category": "vehicle",
+      "risk_level": "low",
+      "description": "Human-powered two-wheeled vehicles such as bicycles."
+    },
+    "motorbike": {
+      "synonyms": [
+        "motorbike",
+        "motorcycle",
+        "scooter"
+      ],
+      "category": "vehicle",
+      "risk_level": "medium",
+      "description": "Motorized two-wheeled vehicles such as motorcycles and scooters."
+    },
+    "dog": {
+      "synonyms": [
+        "dog",
+        "puppy"
+      ],
+      "category": "animal",
+      "risk_level": "low",
+      "description": "Canine animals such as dogs and puppies."
+    },
+    "cat": {
+      "synonyms": [
+        "cat",
+        "kitten"
+      ],
+      "category": "animal",
+      "risk_level": "low",
+      "description": "Feline animals such as cats and kittens."
+    }
+  },
+  "time_keywords": {
+    "night": {
+      "aliases": [
+        "night",
+        "late night",
+        "midnight"
+      ],
+      "start_hour": 22,
+      "end_hour": 5,
+      "wrap_midnight": true,
+      "description": "Late evening to early morning, crossing midnight."
+    },
+    "morning": {
+      "aliases": [
+        "morning",
+        "early morning"
+      ],
+      "start_hour": 6,
+      "end_hour": 11,
+      "wrap_midnight": false,
+      "description": "Morning daylight hours."
+    },
+    "afternoon": {
+      "aliases": [
+        "afternoon"
+      ],
+      "start_hour": 12,
+      "end_hour": 17,
+      "wrap_midnight": false,
+      "description": "Afternoon period."
+    },
+    "evening": {
+      "aliases": [
+        "evening",
+        "late evening"
+      ],
+      "start_hour": 18,
+      "end_hour": 21,
+      "wrap_midnight": false,
+      "description": "Evening period."
+    }
+  },
+  "intent_priority": [
+    "intruder_query",
+    "count_intrusions",
+    "first_detection",
+    "summary_query",
+    "movement_query",
+    "help_query"
+  ],
+  "negation_keywords": [
+    "no",
+    "not",
+    "wasn't",
+    "weren't",
+    "wasnt",
+    "werent",
+    "never",
+    "none",
+    "nobody",
+    "nothing",
+    "neither",
+    "no one"
+  ],
+  "intents": {
+    "intruder_query": {
+      "keywords": [
+        "intruder",
+        "intruders",
+        "intrusion",
+        "intrusions",
+        "trespass",
+        "trespasser",
+        "trespassing",
+        "break in",
+        "break-in",
+        "breakin",
+        "unauthorized access"
+      ],
+      "description": "Questions that care specifically about intrusions or unauthorized access.",
+      "slots": [
+        "time_range",
+        "object_class"
+      ],
+      "examples": [
+        "Was there an intruder detected at 2 to 3?",
+        "Did anyone trespass last night?"
+      ]
+    },
+    "movement_query": {
+      "keywords": [
+        "movement",
+        "motion",
+        "activity",
+        "detected",
+        "detection",
+        "presence",
+        "was there any",
+        "did anything move",
+        "anything moving"
+      ],
+      "description": "Generic movement / presence queries that are not explicitly about intruders.",
+      "slots": [
+        "time_range",
+        "object_class"
+      ],
+      "examples": [
+        "Was there any movement in night?",
+        "Was there any car activity this afternoon?"
+      ]
+    },
+    "summary_query": {
+      "keywords": [
+        "summary",
+        "summarize",
+        "overview",
+        "report",
+        "what happened",
+        "what all happened",
+        "give me a summary"
+      ],
+      "description": "High-level requests for a summary of activity over a period.",
+      "slots": [
+        "time_range",
+        "object_class"
+      ],
+      "examples": [
+        "Give me a summary of intrusions last night.",
+        "Summarize all movement today."
+      ]
+    },
+    "count_intrusions": {
+      "keywords": [
+        "how many intruders",
+        "how many intrusions",
+        "count intruders",
+        "count intrusions",
+        "number of intrusions",
+        "number of intruders"
+      ],
+      "description": "Requests that explicitly ask for counts of intruder events.",
+      "slots": [
+        "time_range",
+        "object_class"
+      ],
+      "examples": [
+        "How many intruders were detected last night?",
+        "How many intrusions happened between 2 and 3?"
+      ]
+    },
+    "first_detection": {
+      "keywords": [
+        "first detection",
+        "when did it start",
+        "when did detection start",
+        "start time",
+        "first time it was detected"
+      ],
+      "description": "Questions that want to know when activity first started.",
+      "slots": [
+        "time_range",
+        "object_class"
+      ],
+      "examples": [
+        "When did the detection start?",
+        "At what time was the first intruder detected?"
+      ]
+    },
+    "help_query": {
+      "keywords": [
+        "what can you tell me",
+        "what can you do",
+        "help",
+        "how does this work",
+        "what do you do",
+        "capabilities"
+      ],
+      "description": "User asks what the system can do or for help.",
+      "slots": [],
+      "examples": [
+        "What can you tell me?",
+        "Help",
+        "What do you do?"
+      ]
+    }
+  },
+  "slots": {
+    "time_range": {
+      "type": "temporal",
+      "description": "Start and end time constraints derived from query text, expressed as hours or named periods.",
+      "examples": [
+        "2 to 3",
+        "between 14 and 16",
+        "at night",
+        "this morning"
+      ],
+      "sources": [
+        "explicit_range",
+        "time_keywords"
+      ]
+    },
+    "object_class": {
+      "type": "categorical",
+      "description": "Canonical object class label (e.g. person, car) derived from synonyms in the query or detection labels.",
+      "examples": [
+        "person",
+        "car",
+        "dog"
+      ],
+      "sources": [
+        "object_synonyms",
+        "class_label"
+      ]
+    },
+    "camera_id": {
+      "type": "identifier",
+      "description": "Camera identifier for multi-camera setups, if mentioned explicitly in the query.",
+      "examples": [
+        "camera 1",
+        "front gate camera",
+        "warehouse camera"
+      ],
+      "sources": [
+        "query_text",
+        "camera_metadata"
+      ]
+    }
+  },
+  "reporting": {
+    "default_time_zone": "Asia/Kolkata",
+    "date_format": "YYYY-MM-DD",
+    "time_format": "HH:mm:ss",
+    "max_summary_events": 100,
+    "include_intrusion_details": true
+  },
+  "cameras": {
+    "default": {
+      "timezone": "Asia/Kolkata",
+      "location": "Unknown site",
+      "description": "Default camera configuration for ROI intrusion monitoring."
+    }
+  },
+  "messages": {
+    "unknown_object_type": "I didn't understand which object type you're asking about. I currently see these object labels in the detections: {known_classes}. Try asking something like \"Was there a person detected between 2 and 3?\" or \"Was there any car detected at night?\".",
+    "no_object_labels": "I can answer questions about intruders or movement over time, and about specific object types that appear in the detections, but this log doesn't contain any object labels.",
+    "no_intruder": "No intruder events were detected for the requested time period.",
+    "no_intruder_with_object": "No intruder events involving a {object_class} were detected for the requested time period.",
+    "no_movement": "No movement events were detected for the requested time period.",
+    "no_movement_with_object": "No movement events with a {object_class} present were detected for the requested time period.",
+    "no_relevant_events": "No relevant events were found for the requested time period.",
+    "yes_intruder": "Yes, intruder activity was detected between {time_interval}.",
+    "yes_intruder_with_object": "Yes, intruder activity involving a {object_class} was detected between {time_interval}.",
+    "yes_movement": "Yes, movement was detected between {time_interval}.",
+    "yes_movement_with_object": "Yes, {object_class} was detected between {time_interval}.",
+    "unclear_event_type": "Activity was recorded between {time_interval}, but the type of event requested was unclear.",
+    "first_detection_at": "First detection between {time_interval}. Activity continued throughout that period.",
+    "first_detection_none": "No detections in the requested time period, so there's no first detection time.",
+    "count_is": "Intrusions were recorded between {time_interval}.",
+    "count_zero": "No intrusions in the requested time period.",
+    "summary_report": "Activity between {time_interval}. {summary_detail}",
+    "summary_none": "No activity in the requested time period.",
+    "query_empty": "Please type a question about intrusions, movement, or detections (e.g. time range or object type).",
+    "query_too_long": "Query is too long. Please shorten and try again.",
+    "help_response": "I can tell you about intrusions and movement in your footage. I currently see these object types: {known_classes}. Try asking: \"Was there an intruder at 2 to 3?\" or \"Was there any movement at night?\" or \"Was there a car between 10 and 11?\"",
+    "help_response_no_classes": "I can answer questions about intruders or movement over time. This log doesn't have object labels yet. Try asking: \"Was there an intruder at 2 to 3?\" or \"Was there any movement at night?\""
+  },
+  "ui": {
+    "loading_events": "Loading events from ROI log...",
+    "loaded_events": "Loaded {count} events.",
+    "ask_question_intro": "Ask a question about intrusions or movement (people, cars, etc.), e.g.:",
+    "example_queries": [
+      "Was there an intruder detected at 2 to 3?",
+      "Was there any movement in night?",
+      "Was there any car detected between 10 and 11?"
+    ],
+    "type_exit_to_stop": "Type 'exit' or 'quit' to stop.",
+    "goodbye": "Goodbye.",
+    "exiting": "Exiting."
+  }
+}
+

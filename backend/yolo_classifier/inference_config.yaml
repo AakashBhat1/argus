@@ -1,0 +1,107 @@
+# ============================================================================
+# OpenVINO Inference Configuration
+# ============================================================================
+# This file controls all inference-related tuning knobs. Environment variables
+# in .env override these values for deployment flexibility.
+# ============================================================================
+
+model:
+  # Path to OpenVINO IR model (.xml file). Relative to backend/ directory.
+  path: "models/yolo26n_int8.xml"
+
+  # Target inference device. Options:
+  #   CPU   - Intel CPU (always available)
+  #   GPU   - Intel Arc / integrated GPU (requires GPU compute runtime)
+  #   NPU   - Intel AI Boost / Meteor Lake NPU (requires NPU driver)
+  #   AUTO  - OpenVINO selects best available device automatically
+  device: "AUTO"
+
+  # Model precision. Must match the converted model:
+  #   FP16 - Half precision (default, recommended for GPU/NPU)
+  #   INT8 - Quantized (requires INT8-converted model)
+  #   FP32 - Full precision (fallback, largest memory footprint)
+  precision: "INT8"
+
+  # Detection confidence threshold. Detections below this score are discarded.
+  confidence_threshold: 0.45
+
+  # Non-Maximum Suppression IoU threshold. Higher = more overlapping boxes kept.
+  nms_iou_threshold: 0.5
+
+  # Input image dimensions [height, width]. Must match model export shape.
+  input_size: [640, 640]
+
+  # COCO class names for YOLO26. The model outputs class IDs 0-79.
+  # This list is used to map numeric IDs to human-readable labels.
+  # If omitted, class IDs are used as labels.
+  class_names_file: null # Optional: path to a .txt file with one class per line
+
+# ============================================================================
+# Dynamic Batching Configuration
+# ============================================================================
+batching:
+  # Enable micro-batching across camera streams.
+  # When enabled, frames from multiple cameras are collected into a single
+  # batch before inference, amortizing per-inference overhead.
+  enabled: true
+
+  # Maximum frames per inference batch.
+  # Should be ≤ number of concurrent streams for optimal utilization.
+  max_batch_size: 8
+
+  # Maximum time (ms) to wait for a full batch before dispatching.
+  # Lower = less latency, higher = better GPU utilization.
+  # Recommended: 10-30ms depending on acceptable latency budget.
+  batch_timeout_ms: 20
+
+# ============================================================================
+# Inference Worker Pool
+# ============================================================================
+worker_pool:
+  # Number of inference threads in the thread pool.
+  # OpenVINO releases the GIL during C++ inference, so threads are effective.
+  # Recommended: 2 for CPU, 1-2 for GPU/NPU (device handles parallelism).
+  num_workers: 2
+
+  # Maximum number of pending frames in the inference queue.
+  # Acts as backpressure: when full, oldest frames are dropped.
+  queue_max_size: 64
+
+# ============================================================================
+# Stream Processing
+# ============================================================================
+streams:
+  # Maximum concurrent camera streams the system will accept.
+  max_concurrent: 20
+
+  # Default frame skip factor. Process every Nth frame.
+  # Higher = lower CPU usage but coarser tracking.
+  default_frame_skip: 2
+
+  # Adaptive FPS throttling: automatically adjusts frame_skip based on
+  # inference latency to maintain a target latency budget.
+  adaptive_fps:
+    enabled: true
+
+    # Target end-to-end latency (ms) from frame capture to detection result.
+    # If actual latency exceeds this, frame_skip is increased.
+    target_latency_ms: 100
+
+    # Minimum frame_skip (fastest processing rate).
+    min_frame_skip: 1
+
+    # Maximum frame_skip (slowest processing rate, for overloaded system).
+    max_frame_skip: 6
+
+# ============================================================================
+# Metrics & Observability
+# ============================================================================
+metrics:
+  # Enable inference metrics collection.
+  enabled: true
+
+  # Expose metrics via HTTP endpoint (/api/v1/metrics).
+  expose_endpoint: true
+
+  # Sliding window size (in seconds) for rate calculations (FPS, throughput).
+  window_seconds: 60

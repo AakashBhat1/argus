@@ -1,0 +1,37 @@
+# Virtual environments and Python caches
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Local env and DB files (injected at runtime via env_file / environment)
+.env
+.env.*
+!.env.example
+*.db
+surveillance.db
+
+# Git and IDE
+.git
+.gitignore
+.idea
+.vscode
+*.swp
+*.swo
+
+# Model files: large binary files are mounted as a volume at runtime.
+# Exclude them from the build context to avoid Windows "invalid file request"
+# errors on symlinks and to keep the image small.
+models
+
+# Generated data files (mounted as volumes)
+intrusion_monitor/roi_events.jsonl
+
+# Calibration images (uncomment to exclude if not needed in the image)
+# calibration_images
