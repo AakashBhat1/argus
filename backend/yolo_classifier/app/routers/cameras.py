@@ -4,10 +4,13 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from app.database import get_db
-from app.models import Camera, CameraStatus, User
+from app.models import (
+    Camera, CameraStatus, User,
+    Detection, Alert, RoiEvent, AnalyticsSnapshot, Track, IntentEvent
+)
 from app.schemas import CameraCreate, CameraUpdate, CameraResponse
 from app.services.auth import get_current_active_user
 
@@ -154,4 +157,15 @@ async def delete_camera(
     camera = result.scalar_one_or_none()
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
+        
+    # Manually cascade delete dependent records to avoid Postgres FK violation
+    # since tracks and intent_events don't have proper ON DELETE CASCADE in the schema yet.
+    await db.execute(delete(IntentEvent).where(IntentEvent.camera_id == camera_id))
+    await db.execute(delete(Track).where(Track.camera_id == camera_id))
+    await db.execute(delete(Detection).where(Detection.camera_id == camera_id))
+    await db.execute(delete(Alert).where(Alert.camera_id == camera_id))
+    await db.execute(delete(RoiEvent).where(RoiEvent.camera_id == camera_id))
+    await db.execute(delete(AnalyticsSnapshot).where(AnalyticsSnapshot.camera_id == camera_id))
+
     await db.delete(camera)
+    await db.commit()
