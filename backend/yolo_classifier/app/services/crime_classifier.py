@@ -156,17 +156,46 @@ class CrimeClassifier:
 
             try:
                 import torch
+                import torchvision.models as tv_models
                 import torchvision.transforms as transforms
 
                 model_path = self._download_model()
 
                 self._device = torch.device(self._device_name)
-                self._model = torch.load(
+
+                # The HF repo ships model.pth as a state_dict (OrderedDict of
+                # weights), not a full pickled module. Build the torchvision
+                # vit_b_16 architecture with a 2-class head and load weights
+                # into it. Calling .eval() on the raw state_dict raises
+                # AttributeError — that was the load failure in production.
+                checkpoint = torch.load(
                     str(model_path),
                     map_location=self._device,
-                    weights_only=False,
+                    weights_only=True,
                 )
-                self._model.eval()
+
+                # Some checkpoints wrap the state_dict under a key like
+                # "model_state_dict" — unwrap if so.
+                if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+                    state_dict = checkpoint["state_dict"]
+                elif isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                    state_dict = checkpoint["model_state_dict"]
+                else:
+                    state_dict = checkpoint
+
+                model = tv_models.vit_b_16(weights=None, num_classes=2)
+                missing, unexpected = model.load_state_dict(state_dict, strict=False)
+                if missing or unexpected:
+                    sample = list(state_dict.keys())[:3]
+                    raise RuntimeError(
+                        f"state_dict layout does not match torchvision.vit_b_16 "
+                        f"(missing={len(missing)}, unexpected={len(unexpected)}, "
+                        f"sample_keys={sample}). Model may have been trained on "
+                        f"a different architecture (e.g. transformers.ViTForImageClassification)."
+                    )
+                model.to(self._device)
+                model.eval()
+                self._model = model
 
                 self._transform = transforms.Compose(
                     [
