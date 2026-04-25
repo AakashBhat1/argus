@@ -84,6 +84,7 @@ class CrimeClassifier:
         self._device = None
         self._load_lock = threading.Lock()
         self._model_loaded = False
+        self._is_hf_model = False
 
         # Metrics
         self._total_classifications = 0
@@ -183,16 +184,53 @@ class CrimeClassifier:
                 else:
                     state_dict = checkpoint
 
-                model = tv_models.vit_b_16(weights=None, num_classes=2)
-                missing, unexpected = model.load_state_dict(state_dict, strict=False)
-                if missing or unexpected:
-                    sample = list(state_dict.keys())[:3]
-                    raise RuntimeError(
-                        f"state_dict layout does not match torchvision.vit_b_16 "
-                        f"(missing={len(missing)}, unexpected={len(unexpected)}, "
-                        f"sample_keys={sample}). Model may have been trained on "
-                        f"a different architecture (e.g. transformers.ViTForImageClassification)."
+                # Detect architecture by inspecting state_dict keys.
+                # HF transformers.ViTForImageClassification uses keys like
+                # 'vit.embeddings.cls_token', 'classifier.weight'.
+                # torchvision.models.vit_b_16 uses 'class_token',
+                # 'encoder.layers...', 'heads.head.weight'.
+                keys = list(state_dict.keys())
+                is_hf_layout = any(
+                    k.startswith("vit.") or k.startswith("classifier.")
+                    for k in keys
+                )
+
+                if is_hf_layout:
+                    try:
+                        from transformers import ViTForImageClassification
+                    except ImportError as imp_err:
+                        raise RuntimeError(
+                            "Crime classifier checkpoint is a HuggingFace "
+                            "transformers.ViTForImageClassification state_dict, but "
+                            "the 'transformers' package is not installed. Install with: "
+                            "pip install transformers"
+                        ) from imp_err
+
+                    model = ViTForImageClassification.from_pretrained(
+                        "google/vit-base-patch16-224",
+                        num_labels=2,
+                        ignore_mismatched_sizes=True,
                     )
+                    missing, unexpected = model.load_state_dict(
+                        state_dict, strict=False
+                    )
+                    self._is_hf_model = True
+                else:
+                    model = tv_models.vit_b_16(weights=None, num_classes=2)
+                    missing, unexpected = model.load_state_dict(
+                        state_dict, strict=False
+                    )
+                    self._is_hf_model = False
+
+                if missing or unexpected:
+                    sample = keys[:3]
+                    raise RuntimeError(
+                        f"state_dict could not be cleanly loaded "
+                        f"(missing={len(missing)}, unexpected={len(unexpected)}, "
+                        f"layout={'huggingface' if is_hf_layout else 'torchvision'}, "
+                        f"sample_keys={sample})."
+                    )
+
                 model.to(self._device)
                 model.eval()
                 self._model = model
@@ -274,7 +312,10 @@ class CrimeClassifier:
 
         with torch.no_grad():
             outputs = self._model(tensor)
-            probabilities = torch.softmax(outputs, dim=1)
+            # HF ViTForImageClassification returns ImageClassifierOutput with
+            # a .logits attribute. torchvision returns a raw tensor.
+            logits = outputs.logits if self._is_hf_model else outputs
+            probabilities = torch.softmax(logits, dim=1)
             predicted_class = torch.argmax(probabilities, dim=1).item()
             confidence = torch.max(probabilities, dim=1)[0].item()
 
