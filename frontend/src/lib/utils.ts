@@ -8,7 +8,8 @@ export function cn(...inputs: ClassValue[]) {
 
 export function formatTimestamp(ts: string): string {
   try {
-    const d = new Date(ts);
+    const hasTz = /([zZ]|[+-]\d{2}:?\d{2})$/.test(ts);
+    const d = new Date(hasTz ? ts : ts + "Z");
     return formatDistanceToNow(d, { addSuffix: true });
   } catch {
     return ts;

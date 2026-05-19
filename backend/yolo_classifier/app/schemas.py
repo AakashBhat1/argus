@@ -1,7 +1,8 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from typing import Optional
 from app.models import UserRole
+from app.utils import iso_utc
 
 
 class Token(BaseModel):
@@ -30,6 +31,10 @@ class UserResponse(BaseModel):
     tenant_id: str
     is_active: bool
     created_at: datetime
+
+    @field_serializer("created_at")
+    def _ser_created_at(self, v: datetime) -> str:
+        return iso_utc(v)
 
 
 class CameraCreate(BaseModel):
@@ -63,6 +68,10 @@ class CameraResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_serializer("created_at", "updated_at")
+    def _ser_dt(self, v: datetime) -> str:
+        return iso_utc(v)
+
 
 class DetectionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -78,6 +87,10 @@ class DetectionResponse(BaseModel):
     bbox_h: float
     timestamp: datetime
     frame_number: Optional[int] = None
+
+    @field_serializer("timestamp")
+    def _ser_ts(self, v: datetime) -> str:
+        return iso_utc(v)
 
 
 class DetectionCreate(BaseModel):
@@ -118,6 +131,10 @@ class AlertResponse(BaseModel):
     description: Optional[str] = None
     timestamp: datetime
     resolved_at: Optional[datetime] = None
+
+    @field_serializer("timestamp", "resolved_at")
+    def _ser_dt(self, v: Optional[datetime]) -> Optional[str]:
+        return None if v is None else iso_utc(v)
 
 
 class AnalyticsQuery(BaseModel):
