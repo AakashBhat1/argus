@@ -12,7 +12,7 @@ import {
   Bell,
   Activity,
   Cpu,
-  Shield,
+  Eye,
   LogOut,
   Menu,
   X,
@@ -58,13 +58,13 @@ export default function Sidebar() {
       <div className="px-5 py-5 border-b border-slate-800/40">
         <div className="flex items-center gap-3">
           <div className="relative w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/20 to-violet-600/20 border border-blue-500/15 flex items-center justify-center overflow-hidden">
-            <Shield className="w-5 h-5 text-blue-400 relative z-10" />
+            <Eye className="w-5 h-5 text-blue-400 relative z-10" />
             <div className="absolute inset-0 rounded-xl bg-blue-500/10 animate-glow-pulse" />
             <div className="absolute inset-0 bg-gradient-to-t from-violet-500/10 to-transparent" />
           </div>
           <div>
             <h1 className="text-sm font-bold tracking-tight">
-              <span className="gradient-text">SentinelAI</span>
+              <span className="gradient-text">Argus</span>
             </h1>
             <p className="text-[10px] text-slate-500/80 tracking-wider font-medium uppercase">
               OpenVINO Edition

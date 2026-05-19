@@ -1,5 +1,5 @@
 {
-  "name": "surveillance-dashboard",
+  "name": "argus-dashboard",
   "version": "1.0.0",
   "private": true,
   "scripts": {

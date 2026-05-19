@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { setToken } from "@/lib/auth";
-import { Shield, Eye, EyeOff, Lock, User } from "lucide-react";
+import { Eye, EyeOff, Lock, User } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -70,11 +70,11 @@ export default function LoginPage() {
         {/* Branding */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/15 to-violet-500/15 border border-blue-500/20 mb-5 relative">
-            <Shield className="w-8 h-8 text-blue-400" />
+            <Eye className="w-8 h-8 text-blue-400" />
             <div className="absolute inset-0 rounded-2xl bg-blue-500/10 animate-glow-pulse" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight">
-            <span className="gradient-text">SentinelAI</span>
+            <span className="gradient-text">Argus</span>
           </h1>
           <p className="text-slate-500 mt-2 text-sm">Sign in to your surveillance dashboard</p>
         </div>

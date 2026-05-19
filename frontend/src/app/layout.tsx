@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SentinelAI — OpenVINO Surveillance",
+  title: "Argus - OpenVINO Surveillance",
   description:
     "Distributed Real-Time Multi-Camera AI Surveillance powered by Intel OpenVINO",
 };
