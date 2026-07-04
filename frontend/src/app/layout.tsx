@@ -2,9 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Argus - OpenVINO Surveillance",
-  description:
-    "Distributed Real-Time Multi-Camera AI Surveillance powered by Intel OpenVINO",
+  title: "Argus",
+  description: "Distributed real-time multi-camera AI surveillance",
 };
 
 export default function RootLayout({

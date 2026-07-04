@@ -152,7 +152,7 @@ export default function LoginPage() {
 
         {/* Footer */}
         <p className="text-center text-[11px] text-slate-600 mt-8">
-          Distributed Multi-Camera AI Surveillance &middot; Intel OpenVINO
+          Distributed Multi-Camera AI Surveillance
         </p>
       </div>
     </div>

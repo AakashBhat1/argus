@@ -41,6 +41,14 @@ function LatencyRow({ label, stats }: { label: string; stats: LatencyStats }) {
   );
 }
 
+/** The API reports the model as a filesystem path with backend-specific
+ *  suffixes (e.g. "models/yolo11n_openvino_model/yolo11n.xml"); show only
+ *  the clean model name in the UI. */
+function displayModelName(modelPath: string): string {
+  const base = modelPath.split(/[\\/]/).pop() ?? modelPath;
+  return base.replace(/\.(xml|onnx|pt|bin)$/i, "").replace(/_openvino(_model)?$/i, "");
+}
+
 const tooltipStyle = {
   backgroundColor: "#0f172a",
   border: "1px solid rgba(148,163,184,0.1)",
@@ -103,14 +111,13 @@ export default function LiveMetricsPage() {
         <div>
           <div className="flex items-center gap-3 mb-0.5">
             <h1 className="page-title"><span className="gradient-text-static">Inference</span></h1>
-            <span className="badge bg-violet-500/10 text-violet-400 border-violet-500/20 text-[10px]">OpenVINO</span>
           </div>
           <p className="page-subtitle">Real-time pipeline observability &mdash; refreshes every 3s</p>
         </div>
         {model && (
           <div className="hidden md:flex flex-col items-end gap-1">
             <span className="text-xs font-semibold text-violet-400">{model.device_actual}</span>
-            <span className="text-[10px] text-slate-600 font-mono">{model.model}</span>
+            <span className="text-[10px] text-slate-600 font-mono">{displayModelName(model.model)}</span>
           </div>
         )}
       </div>
@@ -134,7 +141,7 @@ export default function LiveMetricsPage() {
             <p className={cn("text-3xl font-bold tabular-nums", latencyColor(metrics.latency.inference.avg).split(" ")[0])}>
               {metrics.latency.inference.avg}
             </p>
-            <p className="text-[11px] text-slate-600">ms P50 / {metrics.latency.inference.p95} ms P95</p>
+            <p className="text-[11px] text-slate-600">ms avg &middot; P95 {metrics.latency.inference.p95} ms</p>
           </div>
           <div className="card flex flex-col gap-1">
             <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center mb-2">

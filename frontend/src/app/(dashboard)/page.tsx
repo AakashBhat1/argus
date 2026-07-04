@@ -57,7 +57,7 @@ export default function DashboardPage() {
           <h1 className="page-title">
             <span className="gradient-text-static">Dashboard</span>
           </h1>
-          <p className="page-subtitle">Real-time surveillance &middot; OpenVINO inference</p>
+          <p className="page-subtitle">Real-time multi-camera overview</p>
         </div>
         <div className="flex items-center gap-2">
           {health && (

@@ -67,7 +67,7 @@ export default function Sidebar() {
               <span className="gradient-text">Argus</span>
             </h1>
             <p className="text-[10px] text-slate-500/80 tracking-wider font-medium uppercase">
-              OpenVINO Edition
+              Surveillance Platform
             </p>
           </div>
         </div>
@@ -109,11 +109,6 @@ export default function Sidebar() {
                       )}
                     />
                     {item.label}
-                    {item.label === "Inference" && (
-                      <span className="ml-auto text-[8px] font-bold bg-violet-500/15 text-violet-400 border border-violet-500/25 rounded px-1.5 py-0.5 tracking-wider">
-                        OV
-                      </span>
-                    )}
                   </Link>
                 );
               })}
@@ -137,9 +132,6 @@ export default function Sidebar() {
             <span className="live-dot" />
             <span className="font-medium">System Online</span>
           </div>
-          <p className="text-[9px] text-slate-600 mt-2 font-mono tracking-wide">
-            Intel Arc GPU &middot; NPU &middot; CPU
-          </p>
         </div>
       </div>
     </>
