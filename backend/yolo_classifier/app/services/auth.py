@@ -19,6 +19,12 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 _INSECURE_DEFAULT = "12345678901234567890123456789012"
+# Known placeholder secrets that must never be used in production.
+_INSECURE_DEFAULTS = {
+    _INSECURE_DEFAULT,
+    "super-secret-key-change-in-production",
+    "change-me-in-production",
+}
 SECRET_KEY = os.getenv("SECRET_KEY", _INSECURE_DEFAULT)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
@@ -28,7 +34,7 @@ _debug_mode = os.getenv("DEBUG", "false").strip().lower() in (
     "1", "true", "yes", "on", "debug", "development", "dev",
 )
 if not _debug_mode:
-    if SECRET_KEY == _INSECURE_DEFAULT:
+    if SECRET_KEY in _INSECURE_DEFAULTS:
         raise RuntimeError(
             "SECRET_KEY is set to the insecure default. "
             "Set a strong SECRET_KEY environment variable for production."
@@ -40,6 +46,7 @@ if not _debug_mode:
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -77,6 +84,28 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     if user is None:
         raise credentials_exception
     return user
+
+async def get_optional_current_user(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    """Resolve the current user if a valid bearer token was sent, else None.
+
+    Used by endpoints that behave differently for anonymous callers
+    (e.g. first-user bootstrap on /auth/users) instead of hard-failing.
+    """
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if username is None:
+            return None
+    except (JWTError, ValidationError):
+        return None
+
+    result = await db.execute(select(User).where(User.username == username))
+    return result.scalar_one_or_none()
 
 async def get_current_active_user(current_user: User = Depends(get_current_user)):
     if not current_user.is_active:

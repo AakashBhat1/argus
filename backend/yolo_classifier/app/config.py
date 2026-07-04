@@ -121,6 +121,11 @@ class Settings(BaseSettings):
     MAX_STREAMS: int = 20
     FRAME_SKIP: int = 6
 
+    # Allow camera stream URLs that point at private/loopback/link-local IPs
+    # and plain http(s) sources (e.g. DroidCam / IP Webcam on the LAN).
+    # Keep False in production: SSRF protection rejects such URLs.
+    ALLOW_PRIVATE_STREAM_URLS: bool = False
+
     # -- Batching & Worker Pool -----------------------------------------------
 
     # Enable micro-batching of frames across camera streams.

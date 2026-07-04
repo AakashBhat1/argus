@@ -8,7 +8,8 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Track, IntentEvent
+from app.models import Track, IntentEvent, User
+from app.services.auth import get_current_active_user
 from app.utils import utc_now
 
 router = APIRouter(prefix="/intents", tags=["intents"])
@@ -21,6 +22,7 @@ async def list_intent_events(
     hours: int = Query(default=24, le=168),
     limit: int = Query(default=50, le=200),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     cutoff = utc_now() - timedelta(hours=hours)
     query = (
@@ -59,6 +61,7 @@ async def intent_distribution(
     camera_id: Optional[str] = None,
     hours: int = Query(default=24, le=168),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     cutoff = utc_now() - timedelta(hours=hours)
     query = (
@@ -86,16 +89,23 @@ async def intent_distribution(
 
 
 @router.get("/tracks/{track_id}")
-async def get_track(track_id: str, db: AsyncSession = Depends(get_db)):
+async def get_track(
+    track_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     result = await db.execute(select(Track).where(Track.id == track_id))
     track = result.scalar_one_or_none()
     if not track:
         return {"error": "Track not found"}
 
     intent_result = await db.execute(
-        select(IntentEvent).where(IntentEvent.track_id == track_id)
+        select(IntentEvent)
+        .where(IntentEvent.track_id == track_id)
+        .order_by(desc(IntentEvent.timestamp))
+        .limit(1)
     )
-    intent = intent_result.scalar_one_or_none()
+    intent = intent_result.scalars().first()
 
     return {
         "track": {

@@ -84,13 +84,6 @@ export default function LiveFeed({ lastMessage }: Props) {
 
   const detections = currentFeed?.detections || [];
 
-  // Debug: log first few detection payloads
-  useEffect(() => {
-    if (currentFeed && currentFeed.detections?.length > 0) {
-      console.log("LiveFeed detections:", currentFeed.detections.slice(0, 2));
-    }
-  }, [currentFeed]);
-
   return (
     <div className="card">
       {/* Header */}

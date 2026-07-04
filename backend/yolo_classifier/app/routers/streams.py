@@ -26,7 +26,11 @@ async def start_stream(
     current_user: User = Depends(get_current_active_user),
 ):
     try:
-        result = await db.execute(select(Camera).where(Camera.id == camera_id))
+        result = await db.execute(
+            select(Camera).where(
+                Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id
+            )
+        )
         camera = result.scalar_one_or_none()
         if not camera:
             raise HTTPException(status_code=404, detail="Camera not found")
@@ -58,7 +62,11 @@ async def stop_stream(
     current_user: User = Depends(get_current_active_user),
 ):
     try:
-        result = await db.execute(select(Camera).where(Camera.id == camera_id))
+        result = await db.execute(
+            select(Camera).where(
+                Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id
+            )
+        )
         camera = result.scalar_one_or_none()
         if not camera:
             raise HTTPException(status_code=404, detail="Camera not found")
@@ -80,7 +88,11 @@ async def pause_stream(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(Camera).where(Camera.id == camera_id))
+    result = await db.execute(
+        select(Camera).where(
+            Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id
+        )
+    )
     camera = result.scalar_one_or_none()
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
@@ -98,7 +110,11 @@ async def resume_stream(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(Camera).where(Camera.id == camera_id))
+    result = await db.execute(
+        select(Camera).where(
+            Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id
+        )
+    )
     camera = result.scalar_one_or_none()
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
@@ -109,13 +125,16 @@ async def resume_stream(
 
 
 @router.get("/status")
-async def all_stream_status():
+async def all_stream_status(current_user: User = Depends(get_current_active_user)):
     statuses = stream_manager.get_all_status()
     return {"streams": statuses}
 
 
 @router.get("/{camera_id}/status")
-async def stream_status(camera_id: str):
+async def stream_status(
+    camera_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
     status = stream_manager.get_stream_status(camera_id)
     if not status:
         raise HTTPException(status_code=404, detail="Stream not found")
@@ -123,7 +142,7 @@ async def stream_status(camera_id: str):
 
 
 @router.post("/stop-all")
-async def stop_all_streams():
+async def stop_all_streams(current_user: User = Depends(get_current_active_user)):
     await stream_manager.stop_all()
     return {"status": "all streams stopped"}
 
@@ -135,7 +154,11 @@ async def get_snapshot(
     current_user: User = Depends(get_current_active_user),
 ):
     """Grab a single frame from a camera source as base64 JPEG for the zone editor."""
-    result = await db.execute(select(Camera).where(Camera.id == camera_id))
+    result = await db.execute(
+        select(Camera).where(
+            Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id
+        )
+    )
     camera = result.scalar_one_or_none()
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")

@@ -1,18 +1,22 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, literal_column
-from typing import Optional
+from sqlalchemy import select, func
+from typing import Optional, Union
 
 from app.database import get_db
-from app.models import Detection, Camera, Alert, AlertStatus
+from app.models import Detection, Camera, Alert, AlertStatus, User
+from app.services.auth import get_current_active_user
 from app.utils import utc_now
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
 @router.get("/dashboard")
-async def dashboard_stats(db: AsyncSession = Depends(get_db)):
+async def dashboard_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     now = utc_now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -36,16 +40,30 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
     }
 
 
+def _bucket_to_iso(value: Union[datetime, str, None]) -> Optional[str]:
+    """Serialize an hour bucket (datetime on Postgres, string on SQLite) as ISO UTC."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.replace(" ", "T") + "Z"
+    return value.isoformat() + "Z"
+
+
 @router.get("/detections/timeline")
 async def detection_timeline(
     camera_id: Optional[str] = None,
     hours: int = Query(default=24, le=168),
     interval_minutes: int = Query(default=60, le=1440),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     cutoff = utc_now() - timedelta(hours=hours)
 
-    bucket = func.date_trunc("hour", Detection.timestamp).label("bucket")
+    # date_trunc is Postgres-only; SQLite (local dev default) needs strftime.
+    if db.get_bind().dialect.name == "sqlite":
+        bucket = func.strftime("%Y-%m-%d %H:00:00", Detection.timestamp).label("bucket")
+    else:
+        bucket = func.date_trunc("hour", Detection.timestamp).label("bucket")
 
     query = select(
         bucket,
@@ -61,7 +79,7 @@ async def detection_timeline(
 
     return [
         {
-            "timestamp": (row[0].isoformat() + "Z") if row[0] else None,
+            "timestamp": _bucket_to_iso(row[0]),
             "count": row[1],
             "unique_objects": row[2],
         }
@@ -74,6 +92,7 @@ async def detection_heatmap(
     camera_id: str,
     hours: int = Query(default=24, le=168),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     cutoff = utc_now() - timedelta(hours=hours)
 
@@ -104,6 +123,7 @@ async def class_distribution(
     camera_id: Optional[str] = None,
     hours: int = Query(default=24, le=168),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     cutoff = utc_now() - timedelta(hours=hours)
 
@@ -130,7 +150,10 @@ async def class_distribution(
 
 
 @router.get("/performance")
-async def system_performance(db: AsyncSession = Depends(get_db)):
+async def system_performance(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     now = utc_now()
     last_minute = now - timedelta(minutes=1)
     last_hour = now - timedelta(hours=1)

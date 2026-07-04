@@ -13,8 +13,12 @@ export function useWebSocket(channel: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptRef = useRef(0);
+  // Guards against zombie reconnects: closing the socket on unmount fires
+  // onclose, which would otherwise schedule a new connection forever.
+  const shouldReconnectRef = useRef(true);
 
   const connect = useCallback(() => {
+    if (!shouldReconnectRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const token = getToken();
@@ -38,6 +42,7 @@ export function useWebSocket(channel: string) {
 
     ws.onclose = () => {
       setIsConnected(false);
+      if (!shouldReconnectRef.current) return;
       const delay = Math.min(
         RECONNECT_BASE_MS * Math.pow(2, attemptRef.current),
         RECONNECT_MAX_MS,
@@ -54,10 +59,13 @@ export function useWebSocket(channel: string) {
   }, [channel]);
 
   useEffect(() => {
+    shouldReconnectRef.current = true;
     connect();
     return () => {
+      shouldReconnectRef.current = false;
       if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
       wsRef.current?.close();
+      wsRef.current = null;
     };
   }, [connect]);
 

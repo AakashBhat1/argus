@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
+from app.config import get_settings
 from app.database import get_db
 from app.models import (
     Camera, CameraStatus, User,
@@ -16,7 +17,10 @@ from app.services.auth import get_current_active_user
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
-_ALLOWED_SCHEMES = {"rtsp", "rtsps", "http", "https"}
+# RTSP-only by default; http(s) is opt-in via ALLOW_PRIVATE_STREAM_URLS
+# (LAN sources like DroidCam / IP Webcam stream over plain http).
+_ALLOWED_SCHEMES = {"rtsp", "rtsps"}
+_ALLOWED_SCHEMES_PERMISSIVE = {"rtsp", "rtsps", "http", "https"}
 
 _PRIVATE_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
@@ -65,14 +69,43 @@ def _validate_stream_url(stream_url: str):
                 detail=f"Unsupported video format '{video_path.suffix}'. Allowed: {', '.join(sorted(_VIDEO_EXTENSIONS))}",
             )
         return
+    allow_private = get_settings().ALLOW_PRIVATE_STREAM_URLS
+    allowed_schemes = _ALLOWED_SCHEMES_PERMISSIVE if allow_private else _ALLOWED_SCHEMES
+
     parsed = urlparse(value)
     scheme = parsed.scheme.lower()
-    if scheme and scheme not in _ALLOWED_SCHEMES:
+    if scheme and scheme not in allowed_schemes:
         raise HTTPException(
             status_code=422,
-            detail=f"Unsupported URL scheme '{scheme}'. Only rtsp://, rtsps://, or video:// are allowed.",
+            detail=(
+                f"Unsupported URL scheme '{scheme}'. "
+                f"Allowed: {', '.join(sorted(allowed_schemes))}, or video://."
+            ),
         )
-    # Note: private/local IPs are allowed for local camera streams (DroidCam, IP webcam, etc.)
+
+    # SSRF protection: reject stream sources that target loopback, link-local,
+    # or RFC-1918 private addresses unless explicitly allowed via config
+    # (ALLOW_PRIVATE_STREAM_URLS=true for LAN cameras such as DroidCam).
+    if not allow_private and parsed.hostname:
+        hostname = parsed.hostname.strip().lower()
+        if hostname == "localhost":
+            raise HTTPException(
+                status_code=422,
+                detail="Stream URLs targeting localhost are not allowed.",
+            )
+        try:
+            host_ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            host_ip = None
+        if host_ip is not None and any(host_ip in net for net in _PRIVATE_NETWORKS):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Stream URLs targeting private/loopback/link-local addresses "
+                    "are not allowed. Set ALLOW_PRIVATE_STREAM_URLS=true to permit "
+                    "LAN camera sources."
+                ),
+            )
 
 
 @router.get("/", response_model=list[CameraResponse])

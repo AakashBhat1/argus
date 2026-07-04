@@ -35,7 +35,11 @@ async def list_alerts(
 
 
 @router.post("/", response_model=AlertResponse, status_code=201)
-async def create_alert(data: AlertCreate, db: AsyncSession = Depends(get_db)):
+async def create_alert(
+    data: AlertCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     alert = Alert(**data.model_dump())
     db.add(alert)
     await db.flush()
@@ -48,6 +52,7 @@ async def update_alert(
     alert_id: str,
     data: AlertUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     result = await db.execute(select(Alert).where(Alert.id == alert_id))
     alert = result.scalar_one_or_none()
@@ -67,7 +72,11 @@ async def update_alert(
 
 
 @router.post("/{alert_id}/acknowledge", response_model=AlertResponse)
-async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
+async def acknowledge_alert(
+    alert_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     result = await db.execute(select(Alert).where(Alert.id == alert_id))
     alert = result.scalar_one_or_none()
     if not alert:
@@ -79,7 +88,11 @@ async def acknowledge_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{alert_id}/resolve", response_model=AlertResponse)
-async def resolve_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
+async def resolve_alert(
+    alert_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     result = await db.execute(select(Alert).where(Alert.id == alert_id))
     alert = result.scalar_one_or_none()
     if not alert:
@@ -92,7 +105,10 @@ async def resolve_alert(alert_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/stats")
-async def alert_stats(db: AsyncSession = Depends(get_db)):
+async def alert_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     active = await db.execute(
         select(func.count(Alert.id)).where(Alert.status == AlertStatus.ACTIVE.value)
     )

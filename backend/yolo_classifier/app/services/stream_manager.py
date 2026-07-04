@@ -445,23 +445,10 @@ class VideoStream:
                     if not top:
                         continue
 
-                    # Update detection metadata with Roboflow enrichment
-                    from sqlalchemy import select, update as sa_update
+                    # Update detection metadata with Roboflow enrichment.
+                    # UPDATE has no ORDER BY, so fetch the latest row, then update it.
+                    from sqlalchemy import select
 
-                    stmt = (
-                        sa_update(Detection)
-                        .where(
-                            Detection.camera_id == self.camera_id,
-                            Detection.object_id == rf_result.object_id,
-                        )
-                        .order_by(Detection.timestamp.desc())
-                        .values(
-                            metadata_={
-                                "roboflow": rf_result.to_dict(),
-                            }
-                        )
-                    )
-                    # SQLite doesn't support ORDER BY in UPDATE, so fetch-then-update
                     sel = (
                         select(Detection.id)
                         .where(
@@ -511,10 +498,7 @@ class VideoStream:
                             "timestamp": utc_now().isoformat() + "Z",
                         })
 
-                if alerts_payload:
-                    await session.commit()
-                else:
-                    await session.commit()
+                await session.commit()
 
             # Broadcast threat alerts via WebSocket
             for payload in alerts_payload:

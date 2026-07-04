@@ -13,6 +13,17 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def to_naive_utc(v: datetime | None) -> datetime | None:
+    """Normalize a possibly timezone-aware datetime to naive UTC.
+
+    DB columns store naive UTC; asyncpg rejects timezone-aware values for
+    TIMESTAMP WITHOUT TIME ZONE, so query parameters must be normalized.
+    """
+    if v is None or v.tzinfo is None:
+        return v
+    return v.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def iso_utc(v: datetime) -> str:
     """Serialize a datetime as ISO 8601 UTC with a trailing ``Z``.
 

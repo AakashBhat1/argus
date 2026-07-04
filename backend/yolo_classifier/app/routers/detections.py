@@ -8,7 +8,7 @@ from app.database import get_db
 from app.models import Detection, User
 from app.schemas import DetectionResponse
 from app.services.auth import get_current_active_user
-from app.utils import utc_now
+from app.utils import to_naive_utc, utc_now
 
 router = APIRouter(prefix="/detections", tags=["detections"])
 
@@ -30,9 +30,9 @@ async def list_detections(
     if class_label:
         query = query.where(Detection.class_label == class_label)
     if start_time:
-        query = query.where(Detection.timestamp >= start_time)
+        query = query.where(Detection.timestamp >= to_naive_utc(start_time))
     if end_time:
-        query = query.where(Detection.timestamp <= end_time)
+        query = query.where(Detection.timestamp <= to_naive_utc(end_time))
 
     query = query.order_by(Detection.timestamp.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
@@ -44,6 +44,7 @@ async def get_recent_detections(
     camera_id: str,
     seconds: int = 60,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     cutoff = utc_now() - timedelta(seconds=seconds)
     query = (
@@ -61,6 +62,7 @@ async def count_detections(
     class_label: Optional[str] = None,
     hours: int = 24,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     cutoff = utc_now() - timedelta(hours=hours)
     query = select(func.count(Detection.id)).where(Detection.timestamp >= cutoff)
@@ -77,6 +79,7 @@ async def count_detections(
 async def get_detection_classes(
     camera_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     query = select(Detection.class_label, func.count(Detection.id).label("count"))
     if camera_id:
