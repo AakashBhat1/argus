@@ -1,0 +1,6 @@
+# Shell scripts run on the Linux server — must stay LF even on Windows checkouts.
+*.sh text eol=lf
+# Nginx / MediaMTX configs are mounted into Linux containers.
+*.conf text eol=lf
+mediamtx.yml text eol=lf
+docker-compose.yml text eol=lf
