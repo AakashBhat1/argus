@@ -20,15 +20,24 @@ async def dashboard_stats(
     now = utc_now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    total_cameras = await db.execute(select(func.count(Camera.id)))
+    tenant_id = current_user.tenant_id
+    total_cameras = await db.execute(
+        select(func.count(Camera.id)).where(Camera.tenant_id == tenant_id)
+    )
     active_cameras = await db.execute(
-        select(func.count(Camera.id)).where(Camera.is_active == True)
+        select(func.count(Camera.id)).where(
+            Camera.is_active == True, Camera.tenant_id == tenant_id
+        )
     )
     today_detections = await db.execute(
-        select(func.count(Detection.id)).where(Detection.timestamp >= today_start)
+        select(func.count(Detection.id)).where(
+            Detection.timestamp >= today_start, Detection.tenant_id == tenant_id
+        )
     )
     active_alerts = await db.execute(
-        select(func.count(Alert.id)).where(Alert.status == AlertStatus.ACTIVE.value)
+        select(func.count(Alert.id)).where(
+            Alert.status == AlertStatus.ACTIVE.value, Alert.tenant_id == tenant_id
+        )
     )
 
     return {
@@ -69,7 +78,10 @@ async def detection_timeline(
         bucket,
         func.count(Detection.id).label("count"),
         func.count(func.distinct(Detection.object_id)).label("unique_objects"),
-    ).where(Detection.timestamp >= cutoff)
+    ).where(
+        Detection.timestamp >= cutoff,
+        Detection.tenant_id == current_user.tenant_id,
+    )
 
     if camera_id:
         query = query.where(Detection.camera_id == camera_id)
@@ -103,7 +115,11 @@ async def detection_heatmap(
             func.avg(Detection.bbox_y).label("avg_y"),
             func.count(Detection.id).label("count"),
         )
-        .where(Detection.camera_id == camera_id, Detection.timestamp >= cutoff)
+        .where(
+            Detection.camera_id == camera_id,
+            Detection.tenant_id == current_user.tenant_id,
+            Detection.timestamp >= cutoff,
+        )
         .group_by(Detection.class_label)
     )
 
@@ -131,7 +147,10 @@ async def class_distribution(
         Detection.class_label,
         func.count(Detection.id).label("count"),
         func.avg(Detection.confidence).label("avg_confidence"),
-    ).where(Detection.timestamp >= cutoff)
+    ).where(
+        Detection.timestamp >= cutoff,
+        Detection.tenant_id == current_user.tenant_id,
+    )
 
     if camera_id:
         query = query.where(Detection.camera_id == camera_id)
@@ -158,14 +177,21 @@ async def system_performance(
     last_minute = now - timedelta(minutes=1)
     last_hour = now - timedelta(hours=1)
 
+    tenant_id = current_user.tenant_id
     detections_minute = await db.execute(
-        select(func.count(Detection.id)).where(Detection.timestamp >= last_minute)
+        select(func.count(Detection.id)).where(
+            Detection.timestamp >= last_minute, Detection.tenant_id == tenant_id
+        )
     )
     detections_hour = await db.execute(
-        select(func.count(Detection.id)).where(Detection.timestamp >= last_hour)
+        select(func.count(Detection.id)).where(
+            Detection.timestamp >= last_hour, Detection.tenant_id == tenant_id
+        )
     )
     avg_confidence = await db.execute(
-        select(func.avg(Detection.confidence)).where(Detection.timestamp >= last_hour)
+        select(func.avg(Detection.confidence)).where(
+            Detection.timestamp >= last_hour, Detection.tenant_id == tenant_id
+        )
     )
 
     return {

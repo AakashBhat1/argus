@@ -15,9 +15,14 @@ AsyncSessionLocal = None
 
 
 def _build_engine(database_url: str):
+    kwargs = {}
+    if database_url.startswith("postgresql"):
+        kwargs["pool_size"] = 20
+        kwargs["max_overflow"] = 10
     return create_async_engine(
         database_url,
         echo=settings.DEBUG,
+        **kwargs,
     )
 
 

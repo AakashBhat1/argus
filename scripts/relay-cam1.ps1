@@ -11,10 +11,15 @@
   PowerShell finally{} block.
 
 .PARAMETER Source
-  Source RTSP URL on the LAN. Default = CAM 1 sub-stream (704x576 HEVC, 15 fps).
+  Source RTSP URL on the LAN (camera credentials included by the camera's URL
+  scheme). Defaults to the ARGUS_RELAY_SOURCE environment variable so no
+  camera credentials live in this script or in shell history.
 
 .PARAMETER Dest
-  Destination RTSP URL on EC2 MediaMTX. Default = rtsp://54.173.227.197:8554/live/cam1.
+  Destination RTSP URL on EC2 MediaMTX. Defaults to the ARGUS_RELAY_DEST
+  environment variable. MediaMTX requires publish credentials, so the URL
+  must be in the form:
+    rtsp://mtx_publisher:<password>@<ec2-host>:8554/live/cam1
 
 .PARAMETER LogDir
   Directory for timestamped log file. Default = .\logs
@@ -33,13 +38,24 @@
 
 [CmdletBinding()]
 param(
-  [string] $Source = "rtsp://192.168.29.10:554/user=admin&password=&channel=1&stream=1.sdp",
-  [string] $Dest   = "rtsp://54.173.227.197:8554/live/cam1",
+  [string] $Source = $env:ARGUS_RELAY_SOURCE,
+  [string] $Dest   = $env:ARGUS_RELAY_DEST,
   [string] $LogDir = (Join-Path $PSScriptRoot "..\logs"),
   [int]    $MaxRestarts = 0
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $Source) {
+  Write-Host "ERROR: No source URL. Set ARGUS_RELAY_SOURCE or pass -Source." -ForegroundColor Red
+  Write-Host '  e.g. $env:ARGUS_RELAY_SOURCE = "rtsp://<cam-lan-ip>:554/user=admin&password=<pw>&channel=1&stream=1.sdp"'
+  exit 1
+}
+if (-not $Dest) {
+  Write-Host "ERROR: No destination URL. Set ARGUS_RELAY_DEST or pass -Dest." -ForegroundColor Red
+  Write-Host '  e.g. $env:ARGUS_RELAY_DEST = "rtsp://mtx_publisher:<pw>@<ec2-host>:8554/live/cam1"'
+  exit 1
+}
 
 function Write-Log {
   param([string] $Level, [string] $Message)
@@ -47,6 +63,13 @@ function Write-Log {
   $line = "[$ts] [$Level] $Message"
   Write-Host $line
   if ($script:LogPath) { Add-Content -Path $script:LogPath -Value $line -Encoding utf8 }
+}
+
+function Hide-UrlSecrets {
+  param([string] $Url)
+  # Mask rtsp://user:pass@host and &password=... query credentials in logs.
+  $masked = $Url -replace '(?<=rtsp://)[^/@]+:[^/@]+(?=@)', '***:***'
+  return ($masked -replace '(?i)(password=)[^&\s]*', '$1***')
 }
 
 function Test-RtspSource {
@@ -64,8 +87,8 @@ function Test-RtspSource {
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 $script:LogPath = Join-Path $LogDir ("relay-cam1_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
 Write-Log "INFO" "Log file: $script:LogPath"
-Write-Log "INFO" "Source : $Source"
-Write-Log "INFO" "Dest   : $Dest"
+Write-Log "INFO" "Source : $(Hide-UrlSecrets $Source)"
+Write-Log "INFO" "Dest   : $(Hide-UrlSecrets $Dest)"
 
 # --- Preflight 1: tools -------------------------------------------------------
 foreach ($tool in @("ffmpeg", "ffprobe")) {

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.models import User
-from app.services.auth import get_current_active_user
+from app.services.auth import get_current_active_user, require_admin
 
 router = APIRouter(prefix="/zones", tags=["zones"])
 
@@ -101,7 +101,7 @@ async def list_zones(
 @router.post("/", response_model=ZoneResponse, status_code=201)
 async def create_zone(
     data: ZoneCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
 ):
     """Create a new ROI zone with normalized [0,1] polygon points."""
     zones = _load_zones()
@@ -138,7 +138,7 @@ async def create_zone(
 @router.delete("/{zone_id}", status_code=204)
 async def delete_zone(
     zone_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
 ):
     """Delete an ROI zone by ID."""
     zones = _load_zones()
@@ -152,7 +152,7 @@ async def delete_zone(
 async def update_zone(
     zone_id: int,
     data: ZoneCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
 ):
     """Update an existing ROI zone."""
     zones = _load_zones()

@@ -323,8 +323,12 @@ export const api = {
   metrics: {
     get: () => fetchApi<InferenceMetrics>("/metrics/"),
     model: () => fetchApi<ModelInfo>("/metrics/model"),
-    prometheus: () =>
-      fetch(`${API_BASE}/metrics/prometheus`).then((r) => r.text()),
+    prometheus: () => {
+      const token = getToken();
+      return fetch(`${API_BASE}/metrics/prometheus`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      }).then((r) => r.text());
+    },
   },
 
   intents: {

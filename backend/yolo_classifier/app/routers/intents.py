@@ -27,7 +27,10 @@ async def list_intent_events(
     cutoff = utc_now() - timedelta(hours=hours)
     query = (
         select(IntentEvent)
-        .where(IntentEvent.timestamp >= cutoff)
+        .where(
+            IntentEvent.timestamp >= cutoff,
+            IntentEvent.tenant_id == current_user.tenant_id,
+        )
         .order_by(desc(IntentEvent.timestamp))
         .limit(limit)
     )
@@ -70,7 +73,10 @@ async def intent_distribution(
             func.count(IntentEvent.id).label("count"),
             func.avg(IntentEvent.confidence).label("avg_confidence"),
         )
-        .where(IntentEvent.timestamp >= cutoff)
+        .where(
+            IntentEvent.timestamp >= cutoff,
+            IntentEvent.tenant_id == current_user.tenant_id,
+        )
         .group_by(IntentEvent.intent_type)
         .order_by(desc(func.count(IntentEvent.id)))
     )
@@ -94,7 +100,11 @@ async def get_track(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(Track).where(Track.id == track_id))
+    result = await db.execute(
+        select(Track).where(
+            Track.id == track_id, Track.tenant_id == current_user.tenant_id
+        )
+    )
     track = result.scalar_one_or_none()
     if not track:
         return {"error": "Track not found"}

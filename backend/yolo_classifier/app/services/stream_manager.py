@@ -66,7 +66,12 @@ class VideoStream:
         self.camera_id = camera.id
         self.stream_url = camera.stream_url
         self.camera_name = camera.name
-        self._pipeline = IntrusionPipeline(camera_id=str(camera.id), camera_name=camera.name)
+        self.tenant_id = camera.tenant_id
+        self._pipeline = IntrusionPipeline(
+            camera_id=str(camera.id),
+            camera_name=camera.name,
+            tenant_id=camera.tenant_id,
+        )
         self._inference_pool = inference_pool
 
         self._running = False
@@ -300,7 +305,7 @@ class VideoStream:
                     "is_paused": self._paused,
                     "frame_image": _encode_frame_to_base64(frame, quality=60),
                 }
-                await ws_manager.broadcast_detections(str(self.camera_id), payload)
+                await ws_manager.broadcast_detections(str(self.camera_id), payload, tenant_id=self.tenant_id)
 
                 await asyncio.sleep(0.001)
 
@@ -319,6 +324,7 @@ class VideoStream:
                 for obj in tracked_objects:
                     detection = Detection(
                         camera_id=self.camera_id,
+                        tenant_id=self.tenant_id,
                         object_id=obj["object_id"],
                         class_label=obj["class_label"],
                         confidence=obj["confidence"],
@@ -352,6 +358,7 @@ class VideoStream:
                 if person_count > 10:
                     crowd_alert = Alert(
                         camera_id=self.camera_id,
+                        tenant_id=self.tenant_id,
                         type="crowd_detected",
                         severity=AlertSeverity.HIGH.value,
                         trigger_condition=f"person_count > 10 (detected: {person_count})",
@@ -373,6 +380,7 @@ class VideoStream:
                 for event in intrusion_events:
                     intrusion_alert = Alert(
                         camera_id=self.camera_id,
+                        tenant_id=self.tenant_id,
                         type="intrusion_detected",
                         severity=AlertSeverity.CRITICAL.value,
                         trigger_condition=(
@@ -415,7 +423,7 @@ class VideoStream:
                     await session.commit()
 
             for payload in alerts_payload:
-                await ws_manager.broadcast_alert(payload)
+                await ws_manager.broadcast_alert(payload, tenant_id=self.tenant_id)
         except Exception as exc:
             logger.error("Failed to create alerts: %s", exc)
 
@@ -470,6 +478,7 @@ class VideoStream:
                     if top.confidence >= 0.5:
                         vehicle_alert = Alert(
                             camera_id=self.camera_id,
+                            tenant_id=self.tenant_id,
                             type="vehicle_detected",
                             severity=AlertSeverity.HIGH.value,
                             trigger_condition=(
@@ -502,7 +511,7 @@ class VideoStream:
 
             # Broadcast threat alerts via WebSocket
             for payload in alerts_payload:
-                await ws_manager.broadcast_alert(payload)
+                await ws_manager.broadcast_alert(payload, tenant_id=self.tenant_id)
 
         except Exception as exc:
             logger.error("Roboflow enrichment failed: %s", exc)
@@ -556,6 +565,7 @@ class VideoStream:
                     ):
                         crime_alert = Alert(
                             camera_id=self.camera_id,
+                            tenant_id=self.tenant_id,
                             type="crime_detected",
                             severity=AlertSeverity.CRITICAL.value,
                             trigger_condition=(
@@ -589,7 +599,7 @@ class VideoStream:
 
             # Broadcast crime alerts via WebSocket
             for alert_payload in alerts_payload:
-                await ws_manager.broadcast_alert(alert_payload)
+                await ws_manager.broadcast_alert(alert_payload, tenant_id=self.tenant_id)
 
         except Exception as exc:
             logger.error("Crime classification failed: %s", exc)

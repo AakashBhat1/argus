@@ -21,7 +21,7 @@ async def list_alerts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    query = select(Alert)
+    query = select(Alert).where(Alert.tenant_id == current_user.tenant_id)
     if camera_id:
         query = query.where(Alert.camera_id == camera_id)
     if status:
@@ -40,7 +40,9 @@ async def create_alert(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    alert = Alert(**data.model_dump())
+    payload = data.model_dump()
+    payload["tenant_id"] = current_user.tenant_id
+    alert = Alert(**payload)
     db.add(alert)
     await db.flush()
     await db.refresh(alert)
@@ -54,7 +56,9 @@ async def update_alert(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(Alert).where(Alert.id == alert_id))
+    result = await db.execute(select(Alert).where(
+            Alert.id == alert_id, Alert.tenant_id == current_user.tenant_id
+        ))
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
@@ -77,7 +81,9 @@ async def acknowledge_alert(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(Alert).where(Alert.id == alert_id))
+    result = await db.execute(select(Alert).where(
+            Alert.id == alert_id, Alert.tenant_id == current_user.tenant_id
+        ))
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
@@ -93,7 +99,9 @@ async def resolve_alert(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    result = await db.execute(select(Alert).where(Alert.id == alert_id))
+    result = await db.execute(select(Alert).where(
+            Alert.id == alert_id, Alert.tenant_id == current_user.tenant_id
+        ))
     alert = result.scalar_one_or_none()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
@@ -110,11 +118,17 @@ async def alert_stats(
     current_user: User = Depends(get_current_active_user),
 ):
     active = await db.execute(
-        select(func.count(Alert.id)).where(Alert.status == AlertStatus.ACTIVE.value)
+        select(func.count(Alert.id)).where(
+            Alert.status == AlertStatus.ACTIVE.value,
+            Alert.tenant_id == current_user.tenant_id,
+        )
     )
     by_severity = await db.execute(
         select(Alert.severity, func.count(Alert.id))
-        .where(Alert.status == AlertStatus.ACTIVE.value)
+        .where(
+            Alert.status == AlertStatus.ACTIVE.value,
+            Alert.tenant_id == current_user.tenant_id,
+        )
         .group_by(Alert.severity)
     )
     return {

@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models import Camera, CameraStatus, User
 from app.services.stream_manager import stream_manager, _resolve_stream_source, _open_capture
-from app.services.auth import get_current_active_user
+from app.services.auth import get_current_active_user, require_admin
 
 router = APIRouter(prefix="/streams", tags=["streams"])
 logger = logging.getLogger(__name__)
@@ -125,16 +125,36 @@ async def resume_stream(
 
 
 @router.get("/status")
-async def all_stream_status(current_user: User = Depends(get_current_active_user)):
+async def all_stream_status(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    result = await db.execute(
+        select(Camera).where(Camera.tenant_id == current_user.tenant_id)
+    )
+    cameras = result.scalars().all()
+    camera_ids = {str(cam.id) for cam in cameras}
+
     statuses = stream_manager.get_all_status()
-    return {"streams": statuses}
+    tenant_statuses = [s for s in statuses if s.get("camera_id") in camera_ids]
+    return {"streams": tenant_statuses}
 
 
 @router.get("/{camera_id}/status")
 async def stream_status(
     camera_id: str,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    result = await db.execute(
+        select(Camera).where(
+            Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id
+        )
+    )
+    camera = result.scalar_one_or_none()
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
     status = stream_manager.get_stream_status(camera_id)
     if not status:
         raise HTTPException(status_code=404, detail="Stream not found")
@@ -142,7 +162,7 @@ async def stream_status(
 
 
 @router.post("/stop-all")
-async def stop_all_streams(current_user: User = Depends(get_current_active_user)):
+async def stop_all_streams(current_user: User = Depends(require_admin)):
     await stream_manager.stop_all()
     return {"status": "all streams stopped"}
 

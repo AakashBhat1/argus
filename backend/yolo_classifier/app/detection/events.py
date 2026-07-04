@@ -42,6 +42,15 @@ _COCO_ALLOWED_CLASS_ID = {
 }
 
 
+def _pool_max_from_env(var_name: str, default: int) -> int:
+    """Read a connection-pool size from the environment, falling back safely."""
+    try:
+        value = int(os.getenv(var_name, str(default)))
+    except ValueError:
+        return default
+    return value if value >= 1 else default
+
+
 def _normalize_psycopg2_dsn(raw_url: str) -> str:
     value = (raw_url or "").strip()
     if not value:
@@ -90,7 +99,11 @@ class _RoiEventPostgresWriter:
                 return None
 
             try:
-                self._pool = ThreadedConnectionPool(minconn=1, maxconn=8, dsn=dsn)
+                self._pool = ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=_pool_max_from_env("ROI_PG_POOL_MAX", 16),
+                    dsn=dsn,
+                )
                 return self._pool
             except Exception as exc:
                 if not self._warned_connect_error:
@@ -294,6 +307,7 @@ class RoiEventReporter:
         tracked_objects: List[Dict],
         intrusion_events: Optional[list[IntrusionEvent]] = None,
         timestamp: Optional[datetime] = None,
+        tenant_id: str = "1",
     ) -> None:
         if not tracked_objects:
             return
@@ -376,6 +390,7 @@ class RoiEventReporter:
                 frame_number=frame_number,
                 detections=detection_payload,
                 frame_event=frame_event,
+                tenant_id=tenant_id,
             )
 
     def _write_events_to_db(
@@ -385,6 +400,7 @@ class RoiEventReporter:
         frame_number: int,
         detections: list[dict],
         frame_event: dict,
+        tenant_id: str = "1",
     ) -> None:
         for detection in detections:
             has_intrusion = bool(detection.get("intrusion", False))
@@ -426,6 +442,7 @@ class RoiEventReporter:
                 "zone": zone_names[0] if zone_names else None,
                 "confidence": confidence,
                 "metadata": metadata_payload,
+                "tenant_id": tenant_id,
             }
 
             ok = insert_roi_event(event_payload)

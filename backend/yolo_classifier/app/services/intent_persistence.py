@@ -17,7 +17,7 @@ import psycopg2
 from psycopg2.extras import Json
 from psycopg2.pool import ThreadedConnectionPool
 
-from app.detection.events import _normalize_psycopg2_dsn
+from app.detection.events import _normalize_psycopg2_dsn, _pool_max_from_env
 from app.config import get_settings
 from app.services.intent_classifier import IntentResult
 from app.services.trajectory import TrajectoryFeatures
@@ -54,7 +54,11 @@ class IntentPersistence:
                 return None
 
             try:
-                self._pool = ThreadedConnectionPool(minconn=1, maxconn=4, dsn=dsn)
+                self._pool = ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=_pool_max_from_env("INTENT_PG_POOL_MAX", 8),
+                    dsn=dsn,
+                )
                 return self._pool
             except Exception as exc:
                 if not self._warned:

@@ -147,17 +147,45 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
     try:
         from jose import jwt as _jwt, JWTError as _JWTError
         from app.services.auth import SECRET_KEY, ALGORITHM
-        _jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = _jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if not username:
+            await websocket.close(code=4001)
+            return
+
+        from app.database import get_session_factory
+        from app.models import User, Camera
+        from sqlalchemy import select
+
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            # Check user is active in DB
+            db_res = await session.execute(select(User).where(User.username == username))
+            db_user = db_res.scalar_one_or_none()
+            if not db_user or not db_user.is_active:
+                await websocket.close(code=4001)
+                return
+            tenant_id = db_user.tenant_id
+
+            # Verify camera ownership if subscribing to camera channel
+            if channel not in ("global", "alerts"):
+                cam_res = await session.execute(
+                    select(Camera).where(Camera.id == channel, Camera.tenant_id == tenant_id)
+                )
+                camera = cam_res.scalar_one_or_none()
+                if not camera:
+                    await websocket.close(code=4001)
+                    return
     except Exception:
         await websocket.close(code=4001)
         return
 
-    await ws_manager.connect(websocket, channel)
+    await ws_manager.connect(websocket, channel, tenant_id=tenant_id)
     try:
         while True:
             data = await websocket.receive_text()
             logger.debug(f"WS message on {channel}: {data}")
     except WebSocketDisconnect:
-        await ws_manager.disconnect(websocket, channel)
+        await ws_manager.disconnect(websocket, channel, tenant_id=tenant_id)
     except Exception:
-        await ws_manager.disconnect(websocket, channel)
+        await ws_manager.disconnect(websocket, channel, tenant_id=tenant_id)

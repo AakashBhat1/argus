@@ -5,16 +5,28 @@ webrtc: yes
 webrtcAddress: :8889
 
 # API credentials used by backend stream registration calls.
+# Passwords here are placeholders — override them at deploy time with
+# MediaMTX env vars (set in docker-compose):
+#   MTX_AUTHINTERNALUSERS_0_PASS  → mtx_api password
+#   MTX_AUTHINTERNALUSERS_1_PASS  → mtx_publisher password
 authInternalUsers:
   - user: mtx_api
     pass: mtx_api_change_me
     permissions:
       - action: api
       - action: metrics
+  # Publishing requires credentials so nobody on the internet can push a
+  # fake stream over a live camera path. The relay script authenticates as
+  # this user (see scripts/relay-cam1.ps1).
+  - user: mtx_publisher
+    pass: mtx_publish_change_me
+    permissions:
+      - action: publish
+  # Anonymous access is read-only (browser WebRTC playback). Restrict or
+  # token-gate reads at deploy time — see the AWS deployment checklist.
   - user: any
     permissions:
       - action: read
-      - action: publish
 
 paths:
   all_others:

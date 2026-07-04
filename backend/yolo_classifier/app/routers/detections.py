@@ -24,7 +24,7 @@ async def list_detections(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    query = select(Detection)
+    query = select(Detection).where(Detection.tenant_id == current_user.tenant_id)
     if camera_id:
         query = query.where(Detection.camera_id == camera_id)
     if class_label:
@@ -49,7 +49,11 @@ async def get_recent_detections(
     cutoff = utc_now() - timedelta(seconds=seconds)
     query = (
         select(Detection)
-        .where(Detection.camera_id == camera_id, Detection.timestamp >= cutoff)
+        .where(
+            Detection.camera_id == camera_id,
+            Detection.tenant_id == current_user.tenant_id,
+            Detection.timestamp >= cutoff,
+        )
         .order_by(Detection.timestamp.desc())
     )
     result = await db.execute(query)
@@ -65,7 +69,10 @@ async def count_detections(
     current_user: User = Depends(get_current_active_user),
 ):
     cutoff = utc_now() - timedelta(hours=hours)
-    query = select(func.count(Detection.id)).where(Detection.timestamp >= cutoff)
+    query = select(func.count(Detection.id)).where(
+        Detection.timestamp >= cutoff,
+        Detection.tenant_id == current_user.tenant_id,
+    )
     if camera_id:
         query = query.where(Detection.camera_id == camera_id)
     if class_label:
@@ -81,7 +88,9 @@ async def get_detection_classes(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    query = select(Detection.class_label, func.count(Detection.id).label("count"))
+    query = select(Detection.class_label, func.count(Detection.id).label("count")).where(
+        Detection.tenant_id == current_user.tenant_id
+    )
     if camera_id:
         query = query.where(Detection.camera_id == camera_id)
     query = query.group_by(Detection.class_label).order_by(func.count(Detection.id).desc())

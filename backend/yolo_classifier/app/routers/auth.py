@@ -56,6 +56,7 @@ async def create_user(
 
     if user_count == 0:
         role = UserRole.ADMIN.value
+        tenant_id = "1"
     else:
         if (
             current_user is None
@@ -67,6 +68,9 @@ async def create_user(
                 detail="Only administrators can create users",
             )
         role = user.role
+        # New accounts always belong to the creating admin's tenant so a
+        # multi-tenant deployment cannot mint users into foreign tenants.
+        tenant_id = current_user.tenant_id
 
     valid_roles = {r.value for r in UserRole}
     if role not in valid_roles:
@@ -84,7 +88,8 @@ async def create_user(
     new_user = User(
         username=user.username,
         hashed_password=hashed_password,
-        role=role
+        role=role,
+        tenant_id=tenant_id,
     )
     db.add(new_user)
     await db.commit()

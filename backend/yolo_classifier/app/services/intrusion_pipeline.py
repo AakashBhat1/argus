@@ -34,10 +34,11 @@ class PipelineResult:
 class IntrusionPipeline:
     """Runs post-inference processing for a single camera stream."""
 
-    def __init__(self, camera_id: str, camera_name: str):
+    def __init__(self, camera_id: str, camera_name: str, tenant_id: str = "1"):
         settings = get_settings()
         self._camera_id = str(camera_id)
         self._camera_name = camera_name
+        self._tenant_id = tenant_id
         self._tracker = MultiObjectTracker()
         self._roi_filter = RoiIntrusionFilter(camera_id=self._camera_id)
         self._reporter = RoiEventReporter()
@@ -83,6 +84,7 @@ class IntrusionPipeline:
             tracked_objects=tracked,
             intrusion_events=intrusion_events,
             timestamp=event_time,
+            tenant_id=self._tenant_id,
         )
 
         # Trajectory accumulation + intent classification
@@ -95,6 +97,7 @@ class IntrusionPipeline:
                 camera_id=self._camera_id,
                 features=features,
                 intent=intent,
+                tenant_id=self._tenant_id,
             )
 
         return PipelineResult(
@@ -112,6 +115,7 @@ class IntrusionPipeline:
                 camera_id=self._camera_id,
                 features=features,
                 intent=intent,
+                tenant_id=self._tenant_id,
             )
         self._tracker.reset()
         self._roi_filter.reset()

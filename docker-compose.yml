@@ -18,10 +18,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: surveillance
-      POSTGRES_PASSWORD: surveillance
+      # Set POSTGRES_PASSWORD in a root .env file (or the shell) for any
+      # deployment; the fallback below is for local development only.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-surveillance}
       POSTGRES_DB: surveillance
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -45,13 +47,13 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       # Use Postgres in Docker (db service)
-      DATABASE_URL: postgresql+asyncpg://surveillance:surveillance@db:5432/surveillance
+      DATABASE_URL: postgresql+asyncpg://surveillance:${POSTGRES_PASSWORD:-surveillance}@db:5432/surveillance
       # Block 8: enable MediaMTX dynamic path registration inside Compose network.
       MEDIAMTX_ENABLED: "true"
       MEDIAMTX_API_BASE_URL: http://mediamtx:9997
       MEDIAMTX_REQUEST_TIMEOUT_SECONDS: "3"
       MEDIAMTX_API_USERNAME: mtx_api
-      MEDIAMTX_API_PASSWORD: mtx_api_change_me
+      MEDIAMTX_API_PASSWORD: ${MEDIAMTX_API_PASSWORD:-mtx_api_change_me}
     volumes:
       # Backend writes roi_events.jsonl here; chatbot reads from the same volume
       - roi_events_data:/app/backend/yolo_classifier/intrusion_monitor
@@ -87,7 +89,7 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://$$HOSTNAME:3001/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/ || exit 1"]
       interval: 30s
       timeout: 10s
       start_period: 30s
@@ -103,6 +105,11 @@ services:
       - "8889:8889"       # WebRTC HTTP
       - "8189:8189/udp"   # WebRTC UDP
       - "9997:9997"       # REST API
+    environment:
+      # Override the placeholder passwords in mediamtx.yml. Set these in a
+      # root .env file (or the shell) for any real deployment.
+      MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_API_PASSWORD:-mtx_api_change_me}
+      MTX_AUTHINTERNALUSERS_1_PASS: ${MEDIAMTX_PUBLISH_PASSWORD:-mtx_publish_change_me}
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
     healthcheck:

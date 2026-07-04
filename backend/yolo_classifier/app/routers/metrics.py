@@ -11,13 +11,18 @@ Endpoints:
   GET /api/v1/metrics/model       → Model info and device details
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 
 from app.detection import detector
+from app.services.auth import get_current_active_user
 from app.services.metrics import inference_metrics
 
-router = APIRouter(prefix="/metrics", tags=["metrics"])
+router = APIRouter(
+    prefix="/metrics",
+    tags=["metrics"],
+    dependencies=[Depends(get_current_active_user)],
+)
 
 
 @router.get("/")
