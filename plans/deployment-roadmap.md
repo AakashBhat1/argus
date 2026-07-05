@@ -6,10 +6,17 @@ This roadmap outlines the steps to deploy the hybrid **Argus** system. The core 
 
 ## ── Architectural Design: Hybrid Deployment Model ──
 
+> **Decision (2026-07-05): the frontend runs on AWS EC2, not Vercel.** Everything
+> (frontend + backend + db + MediaMTX + nginx) is served from the single EC2 instance
+> behind nginx. Same-origin keeps the API/WebSocket/WebRTC URLs relative, avoids CORS
+> and mixed-content problems, and the Next.js container costs almost no compute next
+> to YOLO inference. Once the EC2 dashboard is verified working, pause/delete the old
+> Vercel project so a stale copy of the login page isn't left pointing at the API.
+
 To keep cloud costs at **$0** while maintaining 24/7 security scanning, we are using a **hybrid setup**:
 
 1. **AWS EC2 Instance (Runs 24/7 on Free Tier)**
-   * Hosts the Postgres database, Next.js frontend, MediaMTX server, and the YOLO event-detection backend.
+   * Hosts everything: nginx (public entrypoint on 80/443), Next.js frontend, YOLO event-detection backend, Postgres database, and MediaMTX server — all via one `docker compose up`.
    * By using the AWS Free Tier (750 hours/month of a `t2.micro` or `t3.micro`), this runs 24/7 completely free for 12 months.
 2. **Local Secondary Laptop (Runs 24/7 in your home network)**
    * Runs the PowerShell relay script **[relay-cam1.ps1](file:///C:/dev/argus/scripts/relay-cam1.ps1)**.
@@ -29,16 +36,16 @@ Follow these steps to spin up your new instance under the AWS Free Tier:
 5. **Key Pair**: Select **"Proceed without a key pair"** (since we will upload the key we generated locally via User Data).
 
 ### 2. Configure Security Group (Firewall)
-You need to open the following ports in the Security Group settings:
+nginx is the only public web entrypoint — do **not** open 3001/8000/8889/9997
+(they are bound to 127.0.0.1 in docker-compose and proxied by nginx):
 
 | Port | Protocol | Source | Description |
 |---|---|---|---|
-| **22** | TCP | `My IP` or `0.0.0.0/0` | SSH Access |
-| **80** | TCP | `0.0.0.0/0` | HTTP Web traffic |
+| **22** | TCP | `My IP` | SSH Access |
+| **80** | TCP | `0.0.0.0/0` | HTTP (redirects to HTTPS once TLS is set up) |
 | **443** | TCP | `0.0.0.0/0` | HTTPS Web traffic |
-| **3001** | TCP | `0.0.0.0/0` | Next.js Frontend |
-| **8554** | TCP | `0.0.0.0/0` | RTSP Camera Stream Input (from Laptop) |
-| **8889** | TCP | `0.0.0.0/0` | WebRTC Browser Player Output |
+| **8554** | TCP | `My home public IP` | RTSP Camera Stream Input (from relay laptop only) |
+| **8189** | UDP | `0.0.0.0/0` | WebRTC media (browser video playback) |
 
 ---
 
@@ -96,28 +103,47 @@ exit
 ```
 *Log back in using SSH.*
 
-### 2. Clone and Launch the Project
+### 2. Clone, Generate Secrets, and Launch the Project
 ```bash
 # Clone the repository
-git clone <your-git-repo-url> argus
+git clone https://github.com/AakashBhat1/argus.git argus
 cd argus
 
-# Build and start services in the background
+# Generate strong secrets (root .env + backend SECRET_KEY) — run BEFORE first launch
+./scripts/generate-secrets.sh
+
+# Build and start all five services (nginx, frontend, backend, db, mediamtx)
 docker compose up -d --build
 ```
 
 ### 3. Verification Checks
 Ensure everything is running correctly:
 ```bash
-# Check service statuses
+# Check service statuses (all five should be healthy)
 docker compose ps
 
 # Check the YOLO backend logs for any runtime errors
 docker compose logs backend
 
-# Verify frontend accessibility
-curl -I http://localhost:3001
+# Verify the app through nginx (the only public entrypoint)
+curl -I http://localhost/
 ```
+Then open `http://<EC2-PUBLIC-IP>` in a browser — the Argus login page should load
+on port 80 (no `:3001`).
+
+---
+
+## ── Phase 3b: Enabling HTTPS (once you have a domain) ──
+
+1. Create a DNS **A record** for your domain/subdomain pointing at the EC2 Elastic IP.
+2. On the EC2 instance, from the repo root:
+   ```bash
+   ./scripts/setup-tls.sh yourdomain.com you@email.com
+   ```
+   This issues a Let's Encrypt certificate, switches nginx to HTTPS (port 80 then
+   301-redirects), enables HSTS, and prints the renewal cron line to install.
+3. Re-test the dashboard at `https://yourdomain.com` — API, live WebSocket updates,
+   and WebRTC playback all follow the page origin automatically.
 
 ---
 
@@ -133,13 +159,18 @@ winget install Gyan.FFmpeg
 *(Restart PowerShell after installation for PATH changes to apply).*
 
 ### 2. Run the Relay Script
-Run the script, passing the new EC2 Public IP address to the `-Dest` parameter:
+Publishing requires the `mtx_publisher` credentials — read `MEDIAMTX_PUBLISH_PASSWORD`
+from the `.env` file that `generate-secrets.sh` created on the EC2 server:
 ```powershell
 # Change directory to the repository
 cd C:\dev\argus
 
-# Run the relay with your new EC2 Public IP address
-.\scripts\relay-cam1.ps1 -Dest "rtsp://<YOUR-NEW-EC2-IP>:8554/live/cam1"
+# Set once per session (or persist as user env vars) — never commit these
+$env:ARGUS_RELAY_SOURCE = "rtsp://<camera-lan-url-with-creds>"
+$env:ARGUS_RELAY_DEST   = "rtsp://mtx_publisher:<MEDIAMTX_PUBLISH_PASSWORD>@<domain-or-EC2-IP>:8554/live/cam1"
+
+# Run the relay
+.\scripts\relay-cam1.ps1
 ```
 
 ### 3. Monitor Relay Logs
