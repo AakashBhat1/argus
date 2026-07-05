@@ -133,17 +133,28 @@ on port 80 (no `:3001`).
 
 ---
 
-## ── Phase 3b: Enabling HTTPS (once you have a domain) ──
+## ── Phase 3b: Enabling HTTPS on ideasfreshly.store ──
 
-1. Create a DNS **A record** for your domain/subdomain pointing at the EC2 Elastic IP.
-2. On the EC2 instance, from the repo root:
+Domain purchased 2026-07-05: **ideasfreshly.store**. Argus will be served at
+`https://ideasfreshly.store` (apex, no `www` — pick one hostname and stay
+consistent; the TLS cert is issued for the exact name used).
+
+1. In AWS: allocate an **Elastic IP** and associate it with the instance
+   (otherwise the IP changes on every stop/start and breaks DNS).
+2. In the domain registrar's DNS settings: create an **A record** for
+   `ideasfreshly.store` (host `@`) pointing at the Elastic IP. Wait until
+   `nslookup ideasfreshly.store` returns that IP.
+3. On the EC2 instance, from the repo root:
    ```bash
-   ./scripts/setup-tls.sh yourdomain.com you@email.com
+   ./scripts/setup-tls.sh ideasfreshly.store <your-email>
    ```
    This issues a Let's Encrypt certificate, switches nginx to HTTPS (port 80 then
-   301-redirects), enables HSTS, and prints the renewal cron line to install.
-3. Re-test the dashboard at `https://yourdomain.com` — API, live WebSocket updates,
-   and WebRTC playback all follow the page origin automatically.
+   301-redirects), enables HSTS, sets `MEDIAMTX_PUBLIC_HOST=ideasfreshly.store`,
+   and prints the renewal cron line to install.
+4. Re-test the dashboard at `https://ideasfreshly.store` — API, live WebSocket
+   updates, and WebRTC playback all follow the page origin automatically.
+5. Update the relay laptop destination to
+   `rtsp://mtx_publisher:<password>@ideasfreshly.store:8554/live/cam1`.
 
 ---
 
