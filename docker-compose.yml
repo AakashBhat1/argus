@@ -187,7 +187,7 @@ services:
     container_name: intruder-cam3-relay
     restart: unless-stopped
     command: >
-      -re -i https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8
+      -re -i https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/master.m3u8
       -c:v libx264 -preset veryfast -tune zerolatency -an
       -f rtsp -rtsp_transport tcp
       rtsp://mtx_publisher:${MEDIAMTX_PUBLISH_PASSWORD:-mtx_publish_change_me}@mediamtx:8554/live/cam3
