@@ -93,6 +93,7 @@ services:
       NODE_ENV: production
       NEXT_PRIVATE_BACKEND_URL: http://backend:8000
       NEXT_PUBLIC_API_URL: /api/v1
+      HOSTNAME: 0.0.0.0
     depends_on:
       backend:
         condition: service_healthy
