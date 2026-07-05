@@ -12,12 +12,18 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Accept build-time API URLs so next.config.js can bake them in
+# Accept build-time API URLs so next.config.js can bake them in.
+# Path-only values (/api/v1, /ws, /stream) resolve against the page origin,
+# so the same image works over http and https behind the nginx proxy.
 ARG NEXT_PRIVATE_BACKEND_URL=http://backend:8000
 ARG NEXT_PUBLIC_API_URL=/api/v1
+ARG NEXT_PUBLIC_WS_URL=/ws
+ARG NEXT_PUBLIC_MEDIAMTX_URL=/stream
 
 ENV NEXT_PRIVATE_BACKEND_URL=${NEXT_PRIVATE_BACKEND_URL}
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL}
+ENV NEXT_PUBLIC_MEDIAMTX_URL=${NEXT_PUBLIC_MEDIAMTX_URL}
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
