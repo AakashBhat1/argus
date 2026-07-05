@@ -166,3 +166,44 @@ services:
     volumes:
       - certbot_conf:/etc/letsencrypt
       - certbot_www:/var/www/certbot
+
+  # ── Demo Relays (Big Buck Bunny, Sintel, Tears of Steel) ──────────────────────
+  # Relays public HLS streams to MediaMTX internally for multi-camera testing.
+  cam2-relay:
+    image: jrottenberg/ffmpeg:6.1-alpine
+    container_name: intruder-cam2-relay
+    restart: unless-stopped
+    command: >
+      -re -i https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
+      -c:v libx264 -preset veryfast -tune zerolatency -an
+      -f rtsp -rtsp_transport tcp
+      rtsp://mtx_publisher:${MEDIAMTX_PUBLISH_PASSWORD:-mtx_publish_change_me}@mediamtx:8554/live/cam2
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+
+  cam3-relay:
+    image: jrottenberg/ffmpeg:6.1-alpine
+    container_name: intruder-cam3-relay
+    restart: unless-stopped
+    command: >
+      -re -i https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8
+      -c:v libx264 -preset veryfast -tune zerolatency -an
+      -f rtsp -rtsp_transport tcp
+      rtsp://mtx_publisher:${MEDIAMTX_PUBLISH_PASSWORD:-mtx_publish_change_me}@mediamtx:8554/live/cam3
+    depends_on:
+      mediamtx:
+        condition: service_healthy
+
+  cam4-relay:
+    image: jrottenberg/ffmpeg:6.1-alpine
+    container_name: intruder-cam4-relay
+    restart: unless-stopped
+    command: >
+      -re -i https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8
+      -c:v libx264 -preset veryfast -tune zerolatency -an
+      -f rtsp -rtsp_transport tcp
+      rtsp://mtx_publisher:${MEDIAMTX_PUBLISH_PASSWORD:-mtx_publish_change_me}@mediamtx:8554/live/cam4
+    depends_on:
+      mediamtx:
+        condition: service_healthy
