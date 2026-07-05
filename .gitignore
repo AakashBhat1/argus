@@ -107,3 +107,6 @@ CLAUDE.md
 **/CLAUDE.md
 docs/
 backend/docs/
+
+# Local launcher script containing credentials
+start-relay.ps1
