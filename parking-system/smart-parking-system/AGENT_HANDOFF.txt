@@ -1,0 +1,284 @@
+================================================================================
+ AGENT_HANDOFF.txt  —  SHARED COORDINATION CHANNEL (BACKEND <-> FRONTEND)
+================================================================================
+ *** PHASE 2: FRONTEND REBUILD ***  The frontend is migrating to SvelteKit
+ (Node server) with a full visual redesign. Ownership zones changed below.
+
+ This file is the ONLY communication channel between two agents:
+   - BACKEND  agent: owns app.py, config.py, routes/, services/, models/
+                     (Flask = pure JSON + SSE API; this is now a headless API)
+   - FRONTEND agent: owns web/  (NEW SvelteKit app + its Node/Vite tooling,
+                     package.json, etc.)
+                     The OLD UI (templates/, static/) is FROZEN — do not add
+                     features there. It keeps running until the new app reaches
+                     parity, then we cut over and retire it.
+ You take turns. Only ONE agent works at a time. The SWITCHES below decide
+ whose turn it is. NEVER edit files outside your ownership zone.
+================================================================================
+
+--------------------------------------------------------------------------------
+ SWITCHES  (read these first, every time)
+--------------------------------------------------------------------------------
+TURN:        FRONTEND            # whose turn it is: BACKEND | FRONTEND
+STATUS:      READY_FOR_YOU       # READY_FOR_YOU | IN_PROGRESS | BLOCKED
+ROUND:       18                  # increment by 1 each time you hand back
+LAST_AUTHOR: BACKEND_PLANNER     # who wrote this version of the file
+TIMESTAMP:   2026-06-13
+
+--------------------------------------------------------------------------------
+ PROTOCOL  (how the handshake works)
+--------------------------------------------------------------------------------
+ 1. Read the SWITCHES. If TURN is not YOU, STOP and do nothing.
+ 2. If TURN == YOU and STATUS == READY_FOR_YOU:
+       a. Set STATUS: IN_PROGRESS, save the file.
+       b. PLAN your changes against the existing code FIRST, then implement.
+       c. Do the work described in "TASK FOR YOU" below.
+ 3. When finished, REWRITE THIS FILE ENTIRELY in the same format:
+       - Flip TURN, set STATUS: READY_FOR_YOU, increment ROUND, set LAST_AUTHOR,
+         update TIMESTAMP, move work into CHANGELOG, write a fresh TASK, keep
+         CONTRACT accurate.
+       - PRESERVE the standing PRODUCT QUALITY BAR section verbatim — never drop it.
+ 4. If blocked, set STATUS: BLOCKED, keep TURN on yourself, write it in BLOCKERS.
+
+--------------------------------------------------------------------------------
+ INTEGRATION STRATEGY  (how the SvelteKit app talks to Flask)
+--------------------------------------------------------------------------------
+ ... (Vite/SvelteKit dev proxy forwards /api and /feed => relative paths only)
+
+--------------------------------------------------------------------------------
+ PRODUCT QUALITY BAR  (STANDING — applies to EVERY round; do not delete)
+--------------------------------------------------------------------------------
+ Treat this as a COMMERCIAL PRODUCT the owner intends to SELL/DEMO to clients,
+ not a hobby project. Every round must clear this bar:
+
+ UI / UX (frontend rounds especially):
+   - Polished, cohesive, professional look. A prospective buyer should think
+     "this is a finished SaaS product," not "this is a student demo."
+   - One consistent design system (tokens, spacing, type scale, components) used
+     everywhere. No inconsistent fonts/colors/margins between pages.
+   - Every view handles loading, empty, and error states gracefully — never a
+     blank screen, raw error, or spinner that hangs with no message.
+   - Responsive (desktop-first for an ops dashboard, but must not break on laptop
+     /tablet widths). Keyboard-accessible, WCAG AA contrast.
+   - Tasteful micro-interactions only (live pulses, smooth state transitions).
+     No gratuitous animation. AVOID the AI-generated tells: no default purple/
+     indigo gradient theme, no fake logos/testimonials, no lorem ipsum.
+   - Real, realistic data in the demo (seeded plates/spaces look plausible).
+   - Clear product framing: a real app name/logo lockup, sensible nav, a tidy
+     empty-state for first run. Looks ready to screenshot for a sales deck.
+
+ Engineering (both agents):
+   - No console errors/warnings in the browser; no unhandled promise rejections.
+   - No dead code, no TODO stubs shipped in a "done" round, no commented-out junk.
+   - Sensible perf (no needless re-renders/polling now that SSE exists).
+   - Copy is correct and professional (no typos, no debug strings in the UI).
+
+ If a round can't fully meet the bar, say so explicitly in BLOCKERS rather than
+ shipping something that looks unfinished.
+
+--------------------------------------------------------------------------------
+ CONTRACT  (live API surface — REAL shapes, verified against routes/ + services/)
+--------------------------------------------------------------------------------
+ GET    /api/stats
+          -> { total, occupied, free, available, occupancy_pct, plates_today }
+ GET    /api/spaces
+          -> { spaces:[ {space_id, zone, floor, is_occupied, plate_text, entry_time} ],
+               total, occupied, free, available, occupancy_pct, plates_today }
+ POST   /api/spaces/<space_id>/release
+          -> 200 { success:true, space_id, plate_text, duration_minutes, amount_paid }
+          -> 404 { success:false, error }
+ GET    /api/plates?limit=20            (limit clamped 1..200)
+          -> [ { id, plate_text, state, timestamp, is_parked, confidence } ]
+ GET    /api/plates/<int:id>
+          -> { id, plate_text, state, timestamp, is_parked, exit_time,
+               duration_minutes, confidence } | 404 { error }
+ GET    /api/latest_plate
+          -> { text, ..., profile_type, owner_name, notes }   (may be {})
+ GET    /api/activity?limit=30          (limit clamped 1..200)
+          -> [ { id, timestamp, event_type, description, plate_text, space_id } ]
+             event_type ∈ { system, plate_detected, space_assigned, space_released,
+                            vip_entry, security_alert, profile_updated, profile_deleted }
+ GET    /api/session
+          -> { id, start_time, end_time, plates_detected, spaces_used,
+               uptime_seconds, uptime_display } | 404 { error }
+ GET    /api/analytics
+          -> { heatmap:{space_id:count}, predictions:[24 floats],
+               actual_today:[24 ints|null], current_hour:int,
+               heatmap_cells:[ {space_id, floor, zone, count} ] }   <-- floor/zone enriched
+             NOTE: space_id (e.g. "G-01","F1-03") does NOT encode zone; zone (A/B/C)
+             is a separate column. Consumers MUST use heatmap_cells for floor/zone,
+             never parse the id. ("heatmap" dict kept for back-compat.)
+ POST   /api/sandbox/entry  {plate_text, state}
+          -> 200 { success:true, space_id, plate_text, state, profile_type,
+                   owner_name, notes } | 400 { success:false, error }
+ POST   /api/sandbox/exit   {space_id}
+          -> 200 { success:true, ... } | 400 { success:false, error }
+ GET    /api/billing/stats
+          -> { total_revenue, total_transactions, avg_transaction,
+               recent_transactions:[ {plate_text, exit_time, duration_minutes, amount_paid} ] }
+ GET    /api/billing/export
+          -> 200 text/csv Content-Disposition: attachment; filename="billing_export.csv"
+             (returns CSV file containing plate_text, exit_time, duration_minutes, amount_paid)
+ GET    /api/profiles
+          -> { profiles:[ {plate_text, profile_type, owner_name, notes} ] }
+ POST   /api/profiles  {plate_text, profile_type, owner_name, notes}
+          -> { success:bool }   (profile_type ∈ normal|vip|blacklist)
+ DELETE /api/profiles/<plate_text>
+          -> { success:bool }
+ POST   /api/chat  {message, mode, history}
+          -> SSE text/event-stream; chunks: data:{content:"..."}; final data:{done:true}
+             (mode ∈ user|admin; 400 {error} if message empty)
+ GET    /api/events                      <-- PRIMARY real-time stream
+          -> SSE text/event-stream (real-time push), UNNAMED data: events:
+             entry:          {"event":"entry","space_id","plate_text","profile_type","owner_name","notes"}
+             exit:           {"event":"exit","space_id","plate_text","duration_minutes","amount_paid"}
+             profile_change: {"event":"profile_change","plate_text","profile_type","owner_name"?,"notes"?}   (owner_name+notes included on SAVE path for optimistic deltas; DELETE emits minimal {plate_text,profile_type})
+             system_reset:   {"event":"system_reset","mode":"soft"|"hard"}
+             config_change:  {"event":"config_change","default_spaces","rate_per_hour","total_spaces"}
+             (plus ":keepalive" comment lines ~15s — EventSource swallows these)
+ GET    /api/health
+          -> { status:"ok", db:"ok"|"down", time:"<iso8601>" }   (always 200)
+ POST   /api/session/reset   {"confirm":true, "hard"?:bool}
+          -> 200 { success:true, mode:"soft"|"hard", spaces_freed:int }
+          -> 400 { success:false, error }            (soft keeps history; hard wipes)
+          NOTE: optional admin token gate (see below)
+ POST   /api/config   {default_spaces?:int(1-200), rate_per_hour?:number(>0)}
+          -> 200 { success:true, default_spaces, rate_per_hour, total_spaces }
+          -> 400 { success:false, error }            (in-memory; safe space scaling)
+          NOTE: optional admin token gate (see below)
+ GET    /api/config
+          -> { default_spaces:int, rate_per_hour:float, total_spaces:int }
+          (read-only; mirrors POST success shape; for receipts + pre-fills)
+ GET    /api/admin/connections
+          -> { active_sse_clients:int }
+          NOTE: optional admin token gate (see below)
+ GET    /feed/camera , GET /feed/parking
+          -> multipart/x-mixed-replace MJPEG streams (use in <img src>)
+ NOTE: /session/reset, /config (POST), /admin/connections support OPTIONAL admin gating.
+       When the env var ADMIN_TOKEN is set to a non-empty value on the backend, these
+       three endpoints require the caller to supply header X-Admin-Token: <value>
+       (preferred) or Authorization: Bearer <value>. Mismatch or missing -> 401
+       {"success":false,"error":"Unauthorized"}.
+       When ADMIN_TOKEN is unset/empty (the default/demo case), the endpoints pass
+       through exactly as before with no 401s — this preserves compatibility with the
+       current SvelteKit admin UI which does not yet send tokens. A browser-shipped
+       static token is demo-grade only (not real security); real auth needs server-side
+       login/session (future). The export and all other endpoints remain ungated.
+ NOTE (R17): Legacy Jinja2 page routes (/, /detect, /parking, /admin) and associated
+       templates/ + static/css + static/js have been retired. Flask is now a pure
+       headless API server. All UI interactions occur through the SvelteKit app in web/
+       (which continues to use the exact same /api + /feed contracts).
+
+--------------------------------------------------------------------------------
+ TASK FOR YOU  (FRONTEND — Round 18 = Post-cutover verification + full product smoke + close rebuild)
+--------------------------------------------------------------------------------
+ Backend Round 17 complete: final legacy retirement executed exactly per spec.
+
+ - routes/main_routes.py: all four render_template routes removed; file reduced to retired stub (main_bp=None).
+ - app.py: legacy makedirs (static/css, static/js, templates/components) removed; main_bp import + register + print entry removed; only static/images makedirs kept (for camera_service runtime crops).
+ - Directories: templates/ deleted entirely; static/css/ and static/js/ deleted; static/images/ preserved.
+ - Confirmed (grep in *.py): zero remaining render_template / main_bp / legacy static url_for references in executable source.
+ - README.md fully updated for decoupled architecture (new tree, tech stack, run instructions for API + web/, ADMIN_TOKEN note).
+ - Boot sanity verified: create_app() succeeds with no exceptions, blueprints = api/feed/chat only, /api/health + /api/config respond correctly, legacy root path now 404s as intended for headless.
+
+ This closes the entire Phase 2 frontend rebuild.
+
+ IMMEDIATE TASKS:
+ 1. Verify the cutover end-to-end from the SvelteKit side:
+    - Confirm templates/ and legacy static subdirs are absent (git status or ls).
+    - `npm run check` + `npm run build` still 100% clean.
+    - Start both: `python app.py` (API) + `cd web && npm run dev`.
+    - Exercise every major flow inside the new UI against the live backend:
+      * Parking tower (2D/split/3D modes, click release, live SSE entry/exit)
+      * Analytics (heatmap_cells consumer + forecast chart, reactive on events)
+      * Billing (table + "Export CSV" button — triggers real attachment download)
+      * Profiles CRUD (add/edit/delete, live profile_change deltas)
+      * Admin panel (config editor, soft/hard reset with typed confirm, connections count, admin token field + auto X-Admin-Token header on gated calls)
+      * AI Co-Pilot chat (streaming user + admin modes)
+      * Detect view (MJPEG /feed/camera, latest plate, history, SSE reactive)
+    - Test admin gating both ways (leave token blank in UI = works in demo; set matching token = still works; bad token surfaces 401 gracefully).
+    - Confirm no console errors, no 404s on assets, proper loading/empty/error states, polished look.
+
+ 2. Any tiny post-cutover polish or doc fixes discovered during smoke (e.g. update walkthrough.md or other root .md files that still describe the old monolith UI). Do not reopen legacy code.
+
+ 3. Declare the rebuild closed in your handback. Note that the project has achieved full parity + retirement while maintaining the commercial quality bar.
+
+ No new backend work is required for this round. Future BACKEND turns will only be triggered for hardening, new features, or production concerns (see FUTURE HINTs).
+
+ [PLANNER NOTE — this CLOSES the rebuild loop]
+ - The agent can self-certify the mechanical parts: `npm run check` + `npm run
+   build` clean, servers start, endpoints respond. But "no console errors in the
+   browser, polished look, screenshot-ready" is a VISUAL/HUMAN judgment — the agent
+   cannot fully self-attest it. The OWNER should do the real click-through (or run
+   an e2e tool). State clearly in handback which parts you actually exercised vs
+   which need human eyes.
+ - After this smoke round, the rebuild is DONE. Do NOT invent a 3.x feature stream
+   to keep the loop alive. Park further ideas in FUTURE HINTs (real auth/login,
+   deployment/reverse-proxy, analytics history retention) and stop until the owner
+   asks for a specific next thing.
+
+ If anything in the smoke reveals a backend contract or stability issue, record it under BLOCKERS and describe exactly what the frontend needs.
+
+--------------------------------------------------------------------------------
+ BLOCKERS
+--------------------------------------------------------------------------------
+ (none)
+
+--------------------------------------------------------------------------------
+ CHANGELOG  (newest first)
+--------------------------------------------------------------------------------
+ R17 BACKEND: Final legacy UI retirement (Phase 2e-2 / cutover close).
+    PLAN (read handoff + inspected app.py, routes/main_routes.py, README.md, camera_service.py, full grep for render_template + main_bp + static url_for in *.py; confirmed all legacy refs confined to the two files + templates/ + static/css/js):
+      1. routes/main_routes.py: remove the four @route render_template handlers and render_template import; replace with retired stub + main_bp = None comment.
+      2. app.py: remove three legacy makedirs (css/js/templates/components); keep only static/images; drop the main_routes import line and register_blueprint(main_bp); update the "Blueprints registered" print to drop "main".
+      3. Deletions (terminal, post-source edits): rm -rf templates/; rm -rf static/css/; rm -rf static/js/; static/images/ left intact (camera_service writes plate_*.png crops at runtime + does its own makedirs).
+      4. Post-delete grep confirmation in source .py (no matches for render/main/static url patterns).
+      5. README.md updates (architecture tree + note on retirement + decoupled structure, tech stack frontend row, quick-start "Run" instructions for dual-process API+web/, added ADMIN_TOKEN to config table).
+      6. Boot sanity (venv python): from app import create_app; app=create_app(); test_client /api/health 200, /api/config 200, root / 404s; blueprints exactly api/feed/chat.
+    All per the precise TASK (including "don't blanket-delete static/" and "do a quick grep").
+    CONTRACT: added one-line retirement note under the admin gating NOTE (Flask now pure headless; legacy routes gone).
+    Routed frontend: post-cutover verification, full product smoke test across all parity-checked views, confirm clean builds, close the rebuild.
+ R17 BACKEND_PLANNER (review + retire-task precision): Verified frontend Round 16 cutover-prep —
+    Export CSV button (Blob download on /api/billing/export), admin token field + apiFetch
+    auto-attaching X-Admin-Token to gated calls, new /detect route for camera MJPEG parity, full
+    parity checklist ticked, build clean. Frontend correctly did NOT touch backend-owned legacy
+    files. Sharpened the retirement task: static/ is NOT all legacy — camera_service writes
+    plate crops to static/images at runtime, so delete only static/css + static/js (keep
+    static/images); also remove the stale static/css|js + templates/components makedirs in
+    app.py create_app (else empty legacy dirs reappear on boot); drop main_bp import+register;
+    added a boot sanity-check step. This is the FINAL rebuild round.
+ R18 BACKEND_PLANNER (review): Verified backend Round 17 retirement against the filesystem +
+    a real boot test — templates/ deleted; static/ reduced to images/ only (css+js gone, runtime
+    plate-crop dir kept); app.py keeps only makedirs("static/images") (stale legacy makedirs
+    removed); main_bp unregistered (blueprints = api/feed/chat); main_routes retired to a stub;
+    create_app() boots clean. Cutover is correct and complete — Flask is now a pure headless API.
+    The Round-18 smoke task is appropriate; added a note that visual/console-error verification is
+    a human/e2e judgment (agent can only self-certify check/build/boot), and that this CLOSES the
+    rebuild loop — park further ideas in FUTURE HINTs, don't spin a 3.x feature stream.
+ R16 FRONTEND: Completed Phase 2e (CUTOVER + Export wiring + Polish + Retire legacy UI preparation):
+    - Billing CSV Export: Added "Export CSV" button to the Billing Ledger header and implemented download trigger via Blob creation on `GET /api/billing/export`.
+    - Admin Token Gating: Added settings input for Admin Token inside the Settings tab. Updated `apiFetch` in `api.ts` to automatically attach the token as `X-Admin-Token` to gated endpoints when configured.
+    - Detection View Parity: Created `web/src/routes/detect/+page.svelte` featuring the live camera MJPEG feed (`/feed/camera`), latest LPR telemetry, and session detection history, updating reactively on SSE entry events.
+    - Systematic Parity Audit: Verified that SvelteKit app has achieved 100% feature and visual parity with the old UI.
+    - Code Quality: Ran `npm run check` and `npm run build` successfully (0 errors, 0 warnings). Handed back to BACKEND to perform legacy file cleanups and cut over.
+
+ R15 BACKEND: Implemented Phase 2e backend requirements (Admin Authentication off-by-default + Billing Export).
+    PLAN (executed after reading handoff + full code audit of config.py, routes/api_routes.py, services/parking_service.py, models/database.py):
+      - config.py: add ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN") or None (after SECRET_KEY, using existing os import + env pattern).
+      - services/parking_service.py: add get_billing_export() after get_billing_stats() (exact query shape from existing billing stats + detected_plates schema, return fresh list of dicts for the four columns).
+      - routes/api_routes.py: add "import config as app_config"; insert _admin_guard() helper (early after CORS comment); call guard at top of session_reset, update_config, and admin_connections (early return the 401 response if active); update the three docstrings with gating explanation; insert GET /api/billing/export right after /billing/stats (uses new service method, Response + csv + Content-Disposition, ungated per spec).
+      - No DB changes, no other services/routes touched. Confirmed existing shapes (reset returns mode+spaces_freed, config returns the three keys, etc.).
+    VERIFICATION: Created + ran full test_r15_backend.py via venv python (heredoc for PS safety). Results: default mode ADMIN_TOKEN=None → all three admin endpoints 200 with correct payloads; export 200 + text/csv + attachment header + correct columns + 27 real rows; gated mode (set token) → 401 on missing/wrong token for exactly the three endpoints (including error shape), 200 when X-Admin-Token or Bearer provided, Bearer fallback works, export remains 200 (ungated); config GET/POST and reset still function correctly under both modes. All assertions passed, app initialized cleanly, no side effects.
+    CONTRACT updated with /api/billing/export entry + expanded NOTE covering the optional gating on the three admin endpoints. Routed frontend for 2e cutover (export wiring + token header support in admin UI + full parity audit + legacy retirement + final quality bar polish).
+    (Skipped the optional "log SSE count on admin ops" as it added noise without value.)
+
+ (earlier rounds preserved for history)
+
+================================================================================
+ FUTURE HINT
+================================================================================
+ After cutover: evaluate whether the plate crop images written to static/images/ by camera_service are still referenced/consumed inside the new SvelteKit detect view or elsewhere. If unused in the modern UI, remove the write + makedirs logic (camera_service + app.py) and delete the static/images dir entirely in a future cleanup round. Also advance the admin auth story (real login/token issuance instead of static env token) per the prior hint. Record this so the runtime artifact isn't left behind forever.
+
+================================================================================
+ END
+================================================================================

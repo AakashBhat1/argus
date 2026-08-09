@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a reproducible problem in Argus
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting a problem. Remove secrets, private stream URLs, tokens, and sensitive footage before submitting.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Backend API
+        - Inference or tracking
+        - Dashboard
+        - Camera or media streaming
+        - Docker or deployment
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Configure ...
+        2. Start ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Revision
+      description: Commit SHA, branch, or release used
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python and Node versions, browser, deployment method, and inference device when relevant
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Add sanitized evidence that helps diagnose the issue.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed credentials, tokens, private URLs, and sensitive footage.
+          required: true
+        - label: This report does not disclose a security vulnerability.
+          required: true

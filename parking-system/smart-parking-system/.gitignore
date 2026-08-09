@@ -1,0 +1,46 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# ===== Virtual Environments =====
+venv/
+myenv/
+.env
+.venv/
+env/
+
+# ===== Database =====
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.gemini/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===== Runtime =====
+static/images/plate_*.png
+*.log
+
+# ===== Assets (user-specific paths) =====
+assets/*.xml
+CarParkPos
+*.mp4
+
+walkthrough.md

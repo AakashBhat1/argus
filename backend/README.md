@@ -98,4 +98,4 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/crime-classifier/status -Headers 
 
 ## License
 
-MIT. See top-level `LICENSE`.
+The repository does not currently contain a valid software license. See the top-level `README.md` for the current status.

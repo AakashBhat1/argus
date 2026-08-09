@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>License Plate Detection</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+</head>
+<body>
+    <div class="page-wrapper">
+        <div class="container">
+            <header>
+                <h1><i class="fas fa-id-card"></i> License Plate Detection</h1>
+                <nav>
+                    <a href="{{ url_for('index') }}"><i class="fas fa-home"></i> Home</a>
+                </nav>
+            </header>
+            <main>
+                <div class="card">
+                    <div class="video-container">
+                        <img src="{{ url_for('video_feed') }}" alt="Live Video Feed" class="video-feed">
+                    </div>
+                </div>
+                
+                <div id="detection-alert" class="alert-card hidden">
+                    <div class="alert-icon">
+                        <i class="fas fa-exclamation-circle"></i>
+                    </div>
+                    <h2>License Plate Detected!</h2>
+                    <div id="plate-info">
+                        <p><strong><i class="fas fa-id-card"></i> Plate:</strong> <span id="plate-text"></span></p>
+                        <p><strong><i class="fas fa-map-marker-alt"></i> State:</strong> <span id="plate-state"></span></p>
+                        <p><strong><i class="far fa-clock"></i> Time:</strong> <span id="plate-time"></span></p>
+                    </div>
+                    <div class="button-container">
+                        <button id="view-parking" class="btn primary"><i class="fas fa-car"></i> View Parking</button>
+                        <button id="dismiss" class="btn secondary"><i class="fas fa-times"></i> Dismiss</button>
+                    </div>
+                </div>
+            </main>
+            <footer>
+                <p><i class="far fa-copyright"></i> 2025 Smart Parking System</p>
+                <div class="footer-links">
+                    <a href="#"><i class="fas fa-info-circle"></i> About</a>
+                    <a href="#"><i class="fas fa-question-circle"></i> Help</a>
+                    <a href="#"><i class="fas fa-envelope"></i> Contact</a>
+                </div>
+            </footer>
+        </div>
+    </div>
+    <script>
+        // Poll for license plate detections
+        let lastDetectedPlate = "";
+        
+        function checkForDetections() {
+            fetch('/api/latest_plate')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.text && data.text !== lastDetectedPlate) {
+                        // New plate detected
+                        document.getElementById('plate-text').textContent = data.text;
+                        document.getElementById('plate-state').textContent = data.state;
+                        document.getElementById('plate-time').textContent = data.timestamp;
+                        document.getElementById('detection-alert').classList.remove('hidden');
+                        document.getElementById('detection-alert').classList.add('animated');
+                        lastDetectedPlate = data.text;
+                    }
+                })
+                .catch(error => console.error('Error checking for detections:', error));
+        }
+        
+        // Check every 2 seconds
+        setInterval(checkForDetections, 2000);
+        
+        // Button event handlers
+        document.getElementById('view-parking').addEventListener('click', function() {
+            window.location.href = "{{ url_for('parking') }}";
+        });
+        
+        document.getElementById('dismiss').addEventListener('click', function() {
+            document.getElementById('detection-alert').classList.add('hidden');
+            document.getElementById('detection-alert').classList.remove('animated');
+        });
+    </script>
+</body>
+</html>

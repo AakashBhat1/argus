@@ -169,3 +169,96 @@ class SystemStats(BaseModel):
     active_alerts: int
     avg_fps: float
     inference_device: str
+
+
+# ---- Smart Parking ---------------------------------------------------------
+
+
+class ParkingStatsResponse(BaseModel):
+    total: int
+    occupied: int
+    free: int
+    available: int
+    occupancy_pct: float
+    plates_today: int
+
+
+class ParkingSpaceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    space_id: str
+    zone: str
+    floor: str
+    is_occupied: bool
+    vehicle_id: Optional[str] = None
+    entry_time: Optional[datetime] = None
+    plate_text: Optional[str] = None
+    profile_type: Optional[str] = None
+
+    @field_serializer("entry_time")
+    def _ser_entry(self, v: Optional[datetime]) -> Optional[str]:
+        return None if v is None else iso_utc(v)
+
+
+class ReleaseSpaceResponse(BaseModel):
+    space_id: str
+    plate_text: Optional[str] = None
+    duration_minutes: int
+    amount_paid: float
+
+
+class DetectedPlateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    plate_text: str
+    vehicle_id: Optional[str] = None
+    camera_id: Optional[str] = None
+    track_id: Optional[str] = None
+    state: Optional[str] = None
+    timestamp: datetime
+    is_parked: bool
+    exit_time: Optional[datetime] = None
+    duration_minutes: Optional[int] = None
+    confidence: float
+    amount_paid: float
+
+    @field_serializer("timestamp", "exit_time")
+    def _ser_plate_dt(self, v: Optional[datetime]) -> Optional[str]:
+        return None if v is None else iso_utc(v)
+
+
+class ParkingActivityResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tenant_id: str
+    timestamp: datetime
+    event_type: str
+    description: str
+    plate_text: Optional[str] = None
+    space_id: Optional[str] = None
+    actor_user_id: Optional[str] = None
+
+    @field_serializer("timestamp")
+    def _ser_act(self, v: datetime) -> str:
+        return iso_utc(v)
+
+
+class ParkingChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    # When true, use command persona (admin only — enforced in router)
+    command: bool = False
+
+
+class ParkingChatResponse(BaseModel):
+    role: str
+    mode: str
+    content: str
+    command: Optional[dict] = None
+    executed: bool = False
+    result: Optional[dict] = None
+    error: Optional[str] = None

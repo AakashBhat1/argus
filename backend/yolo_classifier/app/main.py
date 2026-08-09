@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import init_db
 from app.detection import detector
-from app.routers import alerts, analytics, cameras, crime, detections, intents, metrics, roboflow, streams, videos, zones, auth
+from app.routers import alerts, analytics, cameras, crime, detections, intents, metrics, roboflow, streams, videos, zones, auth, parking, parking_chat
 from app.services.inference_worker import InferenceWorkerPool
 from app.services.metrics import inference_metrics
 from app.services.roboflow_classifier import roboflow_classifier
@@ -109,6 +109,8 @@ app.include_router(crime.router, prefix="/api/v1")
 app.include_router(videos.router, prefix="/api/v1")
 app.include_router(zones.router, prefix="/api/v1")
 app.include_router(intents.router, prefix="/api/v1")
+app.include_router(parking.router, prefix="/api/v1")
+app.include_router(parking_chat.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

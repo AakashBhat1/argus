@@ -1,0 +1,2 @@
+# keep this directory in git but ignore generated plate images
+!.gitkeep

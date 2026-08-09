@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose an improvement to Argus
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What surveillance, operations, or development problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the desired behavior without relying on private infrastructure or data.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: component
+    attributes:
+      label: Primary component
+      options:
+        - Backend API
+        - Inference or tracking
+        - Dashboard
+        - Camera or media streaming
+        - Docker or deployment
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Security and privacy impact
+      description: Note any effect on authentication, camera access, data retention, or sensitive footage.
+    validations:
+      required: true

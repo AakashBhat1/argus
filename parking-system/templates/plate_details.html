@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plate Details</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+</head>
+<body>
+    <div class="page-wrapper">
+        <div class="container">
+            <header>
+                <h1><i class="fas fa-id-card"></i> License Plate Details</h1>
+                <nav>
+                    <a href="{{ url_for('index') }}"><i class="fas fa-home"></i> Home</a>
+                    <a href="{{ url_for('detect') }}"><i class="fas fa-id-card"></i> License Detection</a>
+                    <a href="{{ url_for('parking') }}"><i class="fas fa-car"></i> Parking</a>
+                </nav>
+            </header>
+            <main>
+                <div class="plate-details card">
+                    <h2><i class="fas fa-info-circle"></i> Plate Information</h2>
+                    <div id="plate-details-container">
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <p>Loading plate details...</p>
+                        </div>
+                    </div>
+                </div>
+            </main>
+            <footer>
+                <p><i class="far fa-copyright"></i> 2025 Smart Parking System</p>
+                <div class="footer-links">
+                    <a href="#"><i class="fas fa-info-circle"></i> About</a>
+                    <a href="#"><i class="fas fa-question-circle"></i> Help</a>
+                    <a href="#"><i class="fas fa-envelope"></i> Contact</a>
+                </div>
+            </footer>
+        </div>
+    </div>
+    <script>
+        // Load plate details
+        document.addEventListener('DOMContentLoaded', function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const plateId = urlParams.get('id');
+            
+            if (plateId) {
+                fetch(`/api/plate/${plateId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById('plate-details-container').innerHTML = `
+                            <div class="plate-info">
+                                <div class="plate-header">
+                                    <div class="plate-badge">${data.plate_text}</div>
+                                </div>
+                                <div class="plate-data">
+                                    <p><i class="fas fa-map-marker-alt"></i> <strong>State:</strong> ${data.state}</p>
+                                    <p><i class="far fa-clock"></i> <strong>Detected at:</strong> ${data.timestamp}</p>
+                                    <p><i class="fas fa-clock"></i> <strong>Entry Time:</strong> ${data.entry_time}</p>
+                                    <p><i class="fas fa-hourglass-half"></i> <strong>Hours Parked:</strong> ${data.hours_parked}</p>
+                                    <p><i class="fas fa-parking"></i> <strong>Parking Status:</strong> 
+                                        <span class="status-badge ${data.is_parked ? 'parked' : 'not-parked'}">
+                                            ${data.is_parked ? 'Parked' : 'Not Parked'}
+                                        </span>
+                                    </p>
+                                </div>
+                                ${data.image ? `
+                                <div class="plate-image-container">
+                                    <h3><i class="fas fa-camera"></i> Captured Image</h3>
+                                    <img src="${data.image}" alt="Plate Image" class="plate-image">
+                                </div>` : ''}
+                            </div>
+                        `;
+                    })
+                    .catch(error => {
+                        document.getElementById('plate-details-container').innerHTML = `
+                            <p class="error"><i class="fas fa-exclamation-triangle"></i> Error loading plate details: ${error.message}</p>
+                        `;
+                    });
+            } else {
+                document.getElementById('plate-details-container').innerHTML = `
+                    <p class="error"><i class="fas fa-exclamation-triangle"></i> No plate ID specified</p>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>

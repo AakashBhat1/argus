@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Parking System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+</head>
+<body>
+    <div class="page-wrapper">
+        <div class="container">
+            <header>
+                <h1><i class="fas fa-parking"></i> Smart Parking System</h1>
+            </header>
+            <main>
+                <div class="welcome-card">
+                    <div class="welcome-header">
+                        <h2>Welcome to the Smart Parking System</h2>
+                        <p class="subtitle">Our system uses computer vision to detect license plates and manage parking spaces efficiently.</p>
+                    </div>
+                    
+                    <div class="features">
+                        <div class="feature fixed-height">
+                            <div class="feature-icon">
+                                <i class="fas fa-id-card"></i>
+                            </div>
+                            <h3>License Plate Detection</h3>
+                            <p>Automatically detects and recognizes vehicle license plates</p>
+                        </div>
+                        <div class="feature fixed-height">
+                            <div class="feature-icon">
+                                <i class="fas fa-car"></i>
+                            </div>
+                            <h3>Parking Space Management</h3>
+                            <p>Tracks available parking spaces in real-time</p>
+                        </div>
+                    </div>
+                    
+                    <div class="button-container">
+                        <a href="{{ url_for('detect') }}" class="btn primary"><i class="fas fa-play-circle"></i> Start Detection</a>
+                    </div>
+                </div>
+            </main>
+            <footer>
+                <p><i class="far fa-copyright"></i> 2025 Smart Parking System</p>
+                <div class="footer-links">
+                    <a href="#"><i class="fas fa-info-circle"></i> About</a>
+                    <a href="#"><i class="fas fa-question-circle"></i> Help</a>
+                    <a href="#"><i class="fas fa-envelope"></i> Contact</a>
+                </div>
+            </footer>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

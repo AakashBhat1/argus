@@ -1,0 +1,89 @@
+services:
+  # ── Nginx reverse proxy ───────────────────────────────────────────────────
+  # Single public entry point: port 80.
+  # Routes /api/* and /feed/* → backend, everything else → frontend.
+  # This is required because the SvelteKit frontend uses relative /api/* URLs
+  # that only resolve correctly when proxied from the same origin.
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: parking-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Flask backend ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: parking-backend
+    volumes:
+      # SQLite database lives in /app/data/ (named volume keeps it across restarts)
+      # DO NOT mount a named volume directly to a .db file — Docker creates a dir there.
+      - parking_db:/app/data
+      # Plate capture images
+      - parking_images:/app/static/images
+    environment:
+      - DATABASE_PATH=/app/data/parking_system.db
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen3:0.6b
+      - FLASK_DEBUG=0
+      - HOST=0.0.0.0
+      - PORT=5000
+      # IMPORTANT: Change SECRET_KEY in production.
+      - SECRET_KEY=${SECRET_KEY:-smart-parking-secret-change-me-in-prod}
+      # Optional: uncomment to enable admin endpoint gating
+      # - ADMIN_TOKEN=your-strong-secret-here
+      # Optional: mount a carpark video for live parking visualization
+      # - CARPARK_VIDEO=/app/assets/carpark.mp4
+    depends_on:
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+    # Healthcheck defined in Dockerfile (polls /api/health every 15s)
+
+  # ── SvelteKit frontend ────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    container_name: parking-frontend
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      # ORIGIN must match the URL users access the app from (for SvelteKit CSRF protection).
+      # With nginx on port 80 this is typically http://localhost or your domain.
+      - ORIGIN=${ORIGIN:-http://localhost}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── Ollama AI service ─────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: parking-ollama
+    volumes:
+      - ollama_models:/root/.ollama
+    # Poll for readiness before pulling the model to avoid the fragile sleep-10 race.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        echo "Waiting for ollama to be ready..."
+        until ollama list >/dev/null 2>&1; do sleep 2; done
+        echo "Pulling model qwen3:0.6b..."
+        ollama pull qwen3:0.6b || echo "Model pull failed or already present"
+        wait
+    restart: unless-stopped
+
+volumes:
+  parking_db:
+  parking_images:
+  ollama_models:

@@ -235,6 +235,21 @@ class Settings(BaseSettings):
     RETENTION_DELETE_ROI_EVENTS: bool = False
     RETENTION_DELETE_ANALYTICS_SNAPSHOTS: bool = False
 
+    # -- Smart Parking --------------------------------------------------------
+    # Hourly tariff in INR (rounded up per hour after free-window).
+    PARKING_RATE_PER_HOUR: float = 20.0
+    # Stays under this many minutes bill a flat short-stay rate.
+    PARKING_FREE_MINUTES: int = 5
+    PARKING_SHORT_STAY_RATE: float = 10.0
+    # Minimum OCR confidence to accept a plate reading.
+    PARKING_OCR_CONFIDENCE_THRESHOLD: float = 0.50
+    # Vehicle classes that can trigger gate OCR.
+    PARKING_OCR_TRIGGER_CLASSES: list[str] = ["car", "motorcycle", "bus", "truck"]
+    # ParkBot / Ollama
+    PARKING_OLLAMA_BASE_URL: str = "http://localhost:11434"
+    PARKING_OLLAMA_MODEL: str = "qwen3:0.6b"
+    PARKING_OLLAMA_TIMEOUT_SECONDS: float = 30.0
+
     @field_validator("DEBUG", mode="before")
     @classmethod
     def _coerce_debug(cls, value):  # type: ignore[no-untyped-def]

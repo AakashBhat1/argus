@@ -12,6 +12,7 @@ import numpy as np
 from app.config import get_settings
 from app.detection.events import RoiEventReporter
 from app.detection.roi import IntrusionEvent, RoiIntrusionFilter
+from app.services.gate_ocr import GateOcrTrigger
 from app.services.intent_classifier import IntentResult, classify_intent
 from app.services.intent_persistence import save_track_and_intent
 from app.services.tracker import MultiObjectTracker
@@ -43,6 +44,7 @@ class IntrusionPipeline:
         self._roi_filter = RoiIntrusionFilter(camera_id=self._camera_id)
         self._reporter = RoiEventReporter()
         self._trajectory = TrajectoryAccumulator(max_age_seconds=60.0)
+        self._gate_ocr = GateOcrTrigger(camera_id=self._camera_id, tenant_id=tenant_id)
         self._allowed_classes = {
             str(item).strip().lower()
             for item in settings.ALLOWED_CLASSES
@@ -100,6 +102,9 @@ class IntrusionPipeline:
                 tenant_id=self._tenant_id,
             )
 
+        # Smart parking: gate ROI collision → OCR once per track_id
+        self._gate_ocr.process_frame(tracked, frame)
+
         return PipelineResult(
             tracked_objects=tracked,
             intrusion_events=intrusion_events,
@@ -121,3 +126,4 @@ class IntrusionPipeline:
         self._roi_filter.reset()
         self._reporter.reset(camera_id=self._camera_id)
         self._trajectory.reset()
+        self._gate_ocr.reset()

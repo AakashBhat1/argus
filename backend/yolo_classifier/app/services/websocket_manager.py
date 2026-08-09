@@ -87,6 +87,11 @@ class WebSocketManager:
 
         await self._send_to_global(tenant_id, message)
 
+    async def broadcast_to_channel(self, tenant_id: str, channel: str, data: dict):
+        """Broadcast a JSON payload to a named channel for one tenant only."""
+        message = json.dumps(data)
+        await self._send_to_channel(tenant_id, channel, message)
+
     async def _send_to_channel(self, tenant_id: str, channel: str, message: str):
         if tenant_id not in self._connections or channel not in self._connections[tenant_id]:
             return

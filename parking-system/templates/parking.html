@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parking Management</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+</head>
+<body>
+    <div class="page-wrapper">
+        <div class="container">
+            <header>
+                <h1><i class="fas fa-car"></i> Parking Management</h1>
+                <nav>
+                    <a href="{{ url_for('index') }}"><i class="fas fa-home"></i> Home</a>
+                    <a href="{{ url_for('detect') }}"><i class="fas fa-id-card"></i> License Detection</a>
+                </nav>
+            </header>
+            <main>
+                <div class="parking-stats card">
+                    <div id="space-stats">
+                        <div class="stat">
+                            <div class="stat-icon free"><i class="fas fa-check-circle"></i></div>
+                            <span id="free-spaces">0</span>
+                            <label>Free Spaces</label>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-icon total"><i class="fas fa-parking"></i></div>
+                            <span id="total-spaces">0</span>
+                            <label>Total Spaces</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="video-container">
+                        <img src="{{ url_for('parking_feed') }}" alt="Parking Area" class="video-feed">
+                    </div>
+                </div>
+                
+                <div class="parking-info card">
+                    <h2><i class="fas fa-history"></i> Recent Detections</h2>
+                    <div id="recent-plates">
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <p>Loading recent plates...</p>
+                        </div>
+                    </div>
+                </div>
+            </main>
+            <footer>
+                <p><i class="far fa-copyright"></i> 2025 Smart Parking System</p>
+                <div class="footer-links">
+                    <a href="#"><i class="fas fa-info-circle"></i> About</a>
+                    <a href="#"><i class="fas fa-question-circle"></i> Help</a>
+                    <a href="#"><i class="fas fa-envelope"></i> Contact</a>
+                </div>
+            </footer>
+        </div>
+    </div>
+    <script>
+        // Update parking space information
+        function updateParkingInfo() {
+            fetch('/api/parking_spaces')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('free-spaces').textContent = data.free;
+                    document.getElementById('total-spaces').textContent = data.total;
+                    
+                    // Update recent plates
+                    fetch('/api/latest_plate')
+                        .then(response => response.json())
+                        .then(plateData => {
+                            if (plateData.text) {
+                                document.getElementById('recent-plates').innerHTML = `
+                                    <div class="plate-entry">
+                                        <div class="plate-header">
+                                            <i class="fas fa-id-card"></i>
+                                            <h3>${plateData.text}</h3>
+                                        </div>
+                                        <p><strong><i class="fas fa-map-marker-alt"></i> State:</strong> ${plateData.state}</p>
+                                        <p><strong><i class="far fa-clock"></i> Time:</strong> ${plateData.timestamp}</p>
+                                    </div>
+                                `;
+                            }
+                        });
+                })
+                .catch(error => console.error('Error updating parking info:', error));
+        }
+        
+        // Update every 5 seconds
+        updateParkingInfo(); // Initial update
+        setInterval(updateParkingInfo, 5000);
+    </script>
+</body>
+</html>
