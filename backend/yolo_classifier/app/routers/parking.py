@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, get_session_factory
+from app.database import get_db
 from app.models import User
 from app.schemas import (
     DetectedPlateResponse,
@@ -21,8 +20,6 @@ from app.services import parking_service
 from app.services.auth import get_current_active_user, require_admin
 from app.services.parking_seeder import seed_parking_spaces_for_tenant
 from app.services.websocket_manager import ws_manager
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/parking", tags=["parking"])
 
@@ -115,46 +112,3 @@ async def list_activity(
     current_user: User = Depends(get_current_active_user),
 ):
     return await parking_service.list_activity(db, current_user.tenant_id, limit=limit)
-
-
-@router.websocket("/ws")
-async def parking_ws(websocket: WebSocket):
-    """Token-in-query WS; broadcasts only on the caller's tenant parking channel."""
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001)
-        return
-    try:
-        from jose import jwt as _jwt, JWTError as _JWTError
-        from app.services.auth import SECRET_KEY, ALGORITHM
-        from app.models import User as UserModel
-        from sqlalchemy import select
-
-        payload = _jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if not username:
-            await websocket.close(code=4001)
-            return
-
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            db_res = await session.execute(
-                select(UserModel).where(UserModel.username == username)
-            )
-            db_user = db_res.scalar_one_or_none()
-            if not db_user or not db_user.is_active:
-                await websocket.close(code=4001)
-                return
-            tenant_id = db_user.tenant_id
-    except Exception:
-        await websocket.close(code=4001)
-        return
-
-    await ws_manager.connect(websocket, "parking", tenant_id=tenant_id)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        await ws_manager.disconnect(websocket, "parking", tenant_id=tenant_id)
-    except Exception:
-        await ws_manager.disconnect(websocket, "parking", tenant_id=tenant_id)

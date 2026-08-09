@@ -4,11 +4,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import get_settings
-from app.database import init_db
+from app.database import get_session_factory, init_db
 from app.detection import detector
+from app.models import Camera
 from app.routers import alerts, analytics, cameras, crime, detections, intents, metrics, roboflow, streams, videos, zones, auth, parking, parking_chat
+from app.services.auth import authenticate_websocket
 from app.services.inference_worker import InferenceWorkerPool
 from app.services.metrics import inference_metrics
 from app.services.roboflow_classifier import roboflow_classifier
@@ -22,6 +26,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+NON_CAMERA_CHANNELS = frozenset({"global", "alerts", "parking"})
 
 # ---------------------------------------------------------------------------
 # Inference Worker Pool (global, started in lifespan)
@@ -141,36 +147,16 @@ async def health_check():
 
 @app.websocket("/ws/{channel}")
 async def websocket_endpoint(websocket: WebSocket, channel: str):
-    # Authenticate via ?token= query parameter
-    token = websocket.query_params.get("token")
-    if not token:
+    current_user = await authenticate_websocket(websocket)
+    if current_user is None:
         await websocket.close(code=4001)
         return
-    try:
-        from jose import jwt as _jwt, JWTError as _JWTError
-        from app.services.auth import SECRET_KEY, ALGORITHM
-        payload = _jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if not username:
-            await websocket.close(code=4001)
-            return
 
-        from app.database import get_session_factory
-        from app.models import User, Camera
-        from sqlalchemy import select
-
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            # Check user is active in DB
-            db_res = await session.execute(select(User).where(User.username == username))
-            db_user = db_res.scalar_one_or_none()
-            if not db_user or not db_user.is_active:
-                await websocket.close(code=4001)
-                return
-            tenant_id = db_user.tenant_id
-
-            # Verify camera ownership if subscribing to camera channel
-            if channel not in ("global", "alerts"):
+    tenant_id = current_user.tenant_id
+    if channel not in NON_CAMERA_CHANNELS:
+        try:
+            session_factory = get_session_factory()
+            async with session_factory() as session:
                 cam_res = await session.execute(
                     select(Camera).where(Camera.id == channel, Camera.tenant_id == tenant_id)
                 )
@@ -178,9 +164,10 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
                 if not camera:
                     await websocket.close(code=4001)
                     return
-    except Exception:
-        await websocket.close(code=4001)
-        return
+        except (SQLAlchemyError, RuntimeError):
+            logger.exception("WebSocket camera authorization failed")
+            await websocket.close(code=4001)
+            return
 
     await ws_manager.connect(websocket, channel, tenant_id=tenant_id)
     try:

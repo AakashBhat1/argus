@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import timedelta
 from typing import Optional
@@ -6,17 +7,20 @@ from jose import jwt, JWTError
 from app.utils import utc_now
 from passlib.context import CryptContext
 from pydantic import ValidationError
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.database import get_db
+from app.database import get_db, get_session_factory
 from app.models import User, UserRole
 
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+logger = logging.getLogger(__name__)
 
 _INSECURE_DEFAULT = "12345678901234567890123456789012"
 # Known placeholder secrets that must never be used in production.
@@ -72,6 +76,40 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+async def authenticate_websocket(websocket: WebSocket) -> Optional[User]:
+    """Authenticate an active user from a WebSocket query-string JWT."""
+    token = websocket.query_params.get("token")
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+
+    username = payload.get("sub")
+    if not isinstance(username, str) or not username:
+        return None
+
+    try:
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.username == username)
+            )
+            user = result.scalar_one_or_none()
+    except SQLAlchemyError:
+        logger.exception("WebSocket authentication database query failed")
+        return None
+    except RuntimeError:
+        logger.exception("WebSocket authentication session is unavailable")
+        return None
+
+    if user is None or not user.is_active:
+        return None
+    return user
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
     credentials_exception = HTTPException(

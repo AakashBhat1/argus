@@ -16,6 +16,8 @@ import {
   LogOut,
   Menu,
   X,
+  Car,
+  MessageSquare,
 } from "lucide-react";
 
 const navSections = [
@@ -24,6 +26,13 @@ const navSections = [
     items: [
       { href: "/", label: "Dashboard", icon: LayoutDashboard },
       { href: "/cameras", label: "Cameras", icon: Camera },
+    ],
+  },
+  {
+    label: "Parking",
+    items: [
+      { href: "/parking", label: "Parking Tower", icon: Car },
+      { href: "/parking/live", label: "Parking Live", icon: MessageSquare },
     ],
   },
   {

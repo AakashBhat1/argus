@@ -227,12 +227,81 @@ export interface FeedData {
   frame_skip?: number;
 }
 
+export interface ParkingSpace {
+  id: string;
+  tenant_id: string;
+  space_id: string;
+  zone: string;
+  floor: string;
+  is_occupied: boolean;
+  vehicle_id?: string | null;
+  entry_time?: string | null;
+  plate_text?: string | null;
+  profile_type?: string | null;
+}
+
+export interface ParkingStats {
+  total: number;
+  occupied: number;
+  free: number;
+  available: number;
+  occupancy_pct: number;
+  plates_today: number;
+}
+
+export interface ReleaseSpace {
+  space_id: string;
+  plate_text?: string | null;
+  duration_minutes: number;
+  amount_paid: number;
+}
+
+export interface DetectedPlate {
+  id: string;
+  tenant_id: string;
+  plate_text: string;
+  vehicle_id?: string | null;
+  camera_id?: string | null;
+  track_id?: string | null;
+  state?: string | null;
+  timestamp: string;
+  is_parked: boolean;
+  exit_time?: string | null;
+  duration_minutes?: number | null;
+  confidence: number;
+  amount_paid: number;
+}
+
+export interface ParkingActivity {
+  id: string;
+  tenant_id: string;
+  timestamp: string;
+  event_type: string;
+  description: string;
+  plate_text?: string | null;
+  space_id?: string | null;
+  actor_user_id?: string | null;
+}
+
+export interface ParkingChatResponse {
+  role: string;
+  mode: string;
+  content: string;
+  command?: Record<string, any> | null;
+  executed: boolean;
+  result?: Record<string, any> | null;
+  error?: string | null;
+}
+
 export interface FeedMessage {
-  type: "detections" | "alert";
-  data: FeedData;
+  type: "detections" | "alert" | "parking";
+  data: any;
 }
 
 export const api = {
+  auth: {
+    me: () => fetchApi<{ id: string; username: string; role: string; tenant_id: string; is_active: boolean }>("/users/me"),
+  },
   cameras: {
     list: (activeOnly = false) =>
       fetchApi<Camera[]>(`/cameras/?active_only=${activeOnly}`),
@@ -351,4 +420,23 @@ export const api = {
   },
 
   health: () => fetchApi<HealthStatus>("/health"),
+  parking: {
+    stats: () => fetchApi<ParkingStats>("/parking/stats"),
+    spaces: () => fetchApi<ParkingSpace[]>("/parking/spaces"),
+    release: (spaceId: string) =>
+      fetchApi<ReleaseSpace>(`/parking/spaces/${spaceId}/release`, { method: "POST" }),
+    plates: () => fetchApi<DetectedPlate[]>("/parking/plates"),
+    latestPlate: () => fetchApi<DetectedPlate | null>("/parking/plates/latest"),
+    activity: () => fetchApi<ParkingActivity[]>("/parking/activity"),
+    chat: (message: string, command = false) =>
+      fetchApi<ParkingChatResponse>("/parking/chat", {
+        method: "POST",
+        body: JSON.stringify({ message, command }),
+      }),
+    chatCommand: (message: string) =>
+      fetchApi<ParkingChatResponse>("/parking/chat/command", {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      }),
+  },
 };
