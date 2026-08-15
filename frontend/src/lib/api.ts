@@ -51,6 +51,7 @@ export interface Camera {
   resolution: string;
   fps: number;
   is_active: boolean;
+  role?: string;
   created_at: string;
   updated_at: string;
 }
@@ -300,7 +301,7 @@ export interface FeedMessage {
 
 export const api = {
   auth: {
-    me: () => fetchApi<{ id: string; username: string; role: string; tenant_id: string; is_active: boolean }>("/users/me"),
+    me: () => fetchApi<{ id: string; username: string; role: string; tenant_id: string; is_active: boolean }>("/auth/users/me"),
   },
   cameras: {
     list: (activeOnly = false) =>
@@ -437,6 +438,18 @@ export const api = {
       fetchApi<ParkingChatResponse>("/parking/chat/command", {
         method: "POST",
         body: JSON.stringify({ message }),
+      }),
+    slots: (cameraId: string) =>
+      fetchApi<{ space_id: string; polygon: number[][] }[]>(`/parking/cameras/${cameraId}/slots`),
+    saveSlots: (cameraId: string, slots: { space_id: string; polygon: number[][] }[]) =>
+      fetchApi<{ status: string; count: number }>(`/parking/cameras/${cameraId}/slots`, {
+        method: "PUT",
+        body: JSON.stringify({ slots }),
+      }),
+    previewSlots: (cameraId: string, slots: { space_id: string; polygon: number[][] }[]) =>
+      fetchApi<{ camera_id: string; width: number; height: number; slots: { space_id: string; occupied: boolean; score: number; source: string }[] }>("/parking/slots/preview", {
+        method: "POST",
+        body: JSON.stringify({ camera_id: cameraId, slots }),
       }),
   },
 };

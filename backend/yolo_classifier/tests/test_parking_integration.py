@@ -13,13 +13,16 @@ from datetime import timedelta
 
 import pytest
 import pytest_asyncio
+import numpy as np
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models import User, UserRole, ParkingSpace, DetectedPlate, ParkingActivityLog
+from app.models import Camera, User, UserRole, ParkingSpace, DetectedPlate, ParkingActivityLog
 from app.services.auth import create_access_token
 from app.services import parking_service
+from app.services.parking_seeder import seed_parking_spaces_for_tenant
+from app.utils import utc_now
 
 
 def _token_for(user: User) -> str:
@@ -263,3 +266,264 @@ class TestParkingIntegration:
             assert exit_log["space_id"] == assigned_space_id
             assert exit_log["plate_text"] == plate_text
             assert exit_log["actor_user_id"] == admin_user.id
+
+    @pytest.mark.asyncio
+    async def test_slot_mapper_auth_tenant_isolation_and_preview(
+        self,
+        app_with_db,
+        db_session,
+        admin_user,
+        operator_user,
+        tenant2_user,
+        tenant2_admin,
+        monkeypatch,
+    ):
+        camera_t1 = Camera(
+            id=f'parking-t1-{uuid.uuid4().hex}',
+            name='Tenant 1 lot',
+            location='Lot A',
+            stream_url='video://fixture.mp4',
+            tenant_id='tenant-1',
+            role='parking',
+        )
+        camera_t2 = Camera(
+            id=f'parking-t2-{uuid.uuid4().hex}',
+            name='Tenant 2 lot',
+            location='Lot B',
+            stream_url='video://fixture.mp4',
+            tenant_id='tenant-2',
+            role='parking',
+        )
+        db_session.add_all([camera_t1, camera_t2])
+        await db_session.commit()
+
+        class FakeCapture:
+            def isOpened(self):
+                return True
+
+            def read(self):
+                frame = np.zeros((128, 64, 3), dtype=np.uint8)
+                frame[::8, :] = 255
+                frame[:, ::8] = 255
+                return True, frame
+
+            def release(self):
+                return None
+
+        monkeypatch.setattr(
+            'app.routers.parking._open_capture',
+            lambda _url: FakeCapture(),
+        )
+        slot_payload = {
+            'slots': [
+                {
+                    'space_id': 'P-01',
+                    'display_order': 0,
+                    'polygon': [[0, 0], [0.5, 0], [0.5, 1], [0, 1]],
+                },
+                {
+                    'space_id': 'P-02',
+                    'display_order': 1,
+                    'polygon': [[0.5, 0], [1, 0], [1, 1], [0.5, 1]],
+                },
+            ]
+        }
+        async with AsyncClient(
+            transport=ASGITransport(app=app_with_db),
+            base_url='http://test',
+        ) as client:
+            assert (
+                await client.get(
+                    f'/api/v1/parking/cameras/{camera_t1.id}/slots'
+                )
+            ).status_code == 401
+
+            client.headers = {
+                'Authorization': f'Bearer {_token_for(operator_user)}'
+            }
+            assert (
+                await client.put(
+                    f'/api/v1/parking/cameras/{camera_t1.id}/slots',
+                    json=slot_payload,
+                )
+            ).status_code == 403
+
+            client.headers = {'Authorization': f'Bearer {_token_for(admin_user)}'}
+            saved = await client.put(
+                f'/api/v1/parking/cameras/{camera_t1.id}/slots',
+                json=slot_payload,
+            )
+            assert saved.status_code == 200
+            assert [slot['space_id'] for slot in saved.json()] == ['P-01', 'P-02']
+            assert all(slot['tenant_id'] == 'tenant-1' for slot in saved.json())
+            all_spaces = await client.get('/api/v1/parking/spaces')
+            assert all_spaces.status_code == 200
+            assert [slot['space_id'] for slot in all_spaces.json()] == ['P-01', 'P-02']
+
+            preview = await client.post(
+                '/api/v1/parking/slots/preview',
+                json={'camera_id': camera_t1.id, **slot_payload},
+            )
+            assert preview.status_code == 200
+            assert preview.json()['camera_id'] == camera_t1.id
+            assert len(preview.json()['slots']) == 2
+
+            invalid = await client.put(
+                f'/api/v1/parking/cameras/{camera_t1.id}/slots',
+                json={
+                    'slots': [
+                        {
+                            'space_id': 'bad',
+                            'polygon': [[0, 0], [1, 0], [1, 1]],
+                        }
+                    ]
+                },
+            )
+            assert invalid.status_code == 422
+
+            client.headers = {
+                'Authorization': f'Bearer {_token_for(tenant2_user)}'
+            }
+            cross_read = await client.get(
+                f'/api/v1/parking/cameras/{camera_t1.id}/slots'
+            )
+            assert cross_read.status_code == 404
+
+            client.headers = {
+                'Authorization': f'Bearer {_token_for(tenant2_admin)}'
+            }
+            cross_write = await client.put(
+                f'/api/v1/parking/cameras/{camera_t1.id}/slots',
+                json=slot_payload,
+            )
+            assert cross_write.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_mapper_preserves_occupied_unmapped_session(
+        self,
+        app_with_db,
+        db_session,
+        admin_user,
+    ):
+        suffix = uuid.uuid4().hex
+        camera = Camera(
+            id=f'preserve-camera-{suffix}',
+            name='Mapped lot',
+            location='Lot',
+            stream_url='0',
+            tenant_id='tenant-1',
+            role='parking',
+        )
+        db_session.add(camera)
+        await seed_parking_spaces_for_tenant(db_session, 'tenant-1')
+        plate_text = f'KA{suffix[:8].upper()}'
+        await parking_service.record_detected_plate(
+            db_session, 'tenant-1', plate_text
+        )
+        assigned = await parking_service.assign_space(
+            db_session, 'tenant-1', plate_text
+        )
+        assert assigned is not None
+        seeded = await db_session.get(ParkingSpace, assigned['space_pk'])
+        original_entry = utc_now() - timedelta(minutes=42)
+        seeded.entry_time = original_entry
+        seeded_id = seeded.id
+        original_vehicle_id = seeded.vehicle_id
+        await db_session.commit()
+
+        payload = {
+            'slots': [
+                {
+                    'space_id': 'P-01',
+                    'display_order': 0,
+                    'polygon': [[0, 0], [1, 0], [1, 1], [0, 1]],
+                }
+            ]
+        }
+        async with AsyncClient(
+            transport=ASGITransport(app=app_with_db),
+            base_url='http://test',
+            headers={
+                'Authorization': f'Bearer {_token_for(admin_user)}'
+            },
+        ) as client:
+            response = await client.put(
+                f'/api/v1/parking/cameras/{camera.id}/slots',
+                json=payload,
+            )
+        assert response.status_code == 200
+
+        db_session.expire_all()
+        preserved = await db_session.get(ParkingSpace, seeded_id)
+        assert preserved is not None
+        assert preserved.camera_id is None
+        assert preserved.is_occupied is True
+        assert preserved.vehicle_id == original_vehicle_id
+        assert preserved.entry_time == original_entry
+
+    @pytest.mark.asyncio
+    async def test_mapper_rejects_replacing_occupied_mapped_bay(
+        self,
+        app_with_db,
+        db_session,
+        admin_user,
+    ):
+        suffix = uuid.uuid4().hex
+        camera = Camera(
+            id=f'conflict-camera-{suffix}',
+            name='Occupied mapped lot',
+            location='Lot',
+            stream_url='0',
+            tenant_id='tenant-1',
+            role='parking',
+        )
+        profile = await parking_service.get_or_create_profile(
+            db_session, 'tenant-1', f'TN{suffix[:8].upper()}'
+        )
+        original_polygon = [[0, 0], [0.5, 0], [0.5, 1], [0, 1]]
+        space = ParkingSpace(
+            id=f'occupied-space-{suffix}',
+            tenant_id='tenant-1',
+            camera_id=camera.id,
+            space_id='P-01',
+            polygon=original_polygon,
+            is_occupied=True,
+            vehicle_id=profile.id,
+            entry_time=utc_now() - timedelta(minutes=15),
+        )
+        db_session.add_all([camera, space])
+        await db_session.commit()
+        space_pk = space.id
+        profile_id = profile.id
+        original_entry = space.entry_time
+
+        payload = {
+            'slots': [
+                {
+                    'space_id': 'P-01',
+                    'display_order': 0,
+                    'polygon': [[0.5, 0], [1, 0], [1, 1], [0.5, 1]],
+                }
+            ]
+        }
+        async with AsyncClient(
+            transport=ASGITransport(app=app_with_db),
+            base_url='http://test',
+            headers={
+                'Authorization': f'Bearer {_token_for(admin_user)}'
+            },
+        ) as client:
+            response = await client.put(
+                f'/api/v1/parking/cameras/{camera.id}/slots',
+                json=payload,
+            )
+        assert response.status_code == 409
+        assert 'P-01' in response.json()['detail']
+
+        db_session.expire_all()
+        preserved = await db_session.get(ParkingSpace, space_pk)
+        assert preserved is not None
+        assert preserved.is_occupied is True
+        assert preserved.vehicle_id == profile_id
+        assert preserved.entry_time == original_entry
+        assert preserved.polygon == original_polygon

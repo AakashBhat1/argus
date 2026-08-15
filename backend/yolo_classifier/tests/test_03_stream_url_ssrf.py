@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import os
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -83,3 +84,54 @@ class TestStreamUrlSsrfValidation:
         with pytest.raises(HTTPException) as exc_info:
             validate("rtsp://172.20.0.5/cam")
         assert exc_info.value.status_code == 422
+
+    def test_video_validator_and_stream_resolver_agree_on_sample_clip(self):
+        from app.services.stream_manager import _resolve_stream_source
+
+        uri = "video://istockphoto-1370353417-640_adpp_is_slower_8x.mp4"
+        resolved = _resolve_stream_source(uri)
+        assert resolved != uri
+        assert Path(resolved).is_file()
+        _get_validator()(uri)
+
+    def test_video_validator_and_stream_resolver_agree_on_missing_clip(self):
+        from app.services.stream_manager import _resolve_stream_source
+
+        uri = "video://does-not-exist.mp4"
+        assert _resolve_stream_source(uri) == uri
+        with pytest.raises(HTTPException) as exc_info:
+            _get_validator()(uri)
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == (
+            "Video file 'does-not-exist.mp4' not found in video folder."
+        )
+
+    def test_video_uri_rejects_filename_separator_with_existing_message(self):
+        uri = "video://nested/sample.mp4"
+        with pytest.raises(HTTPException) as exc_info:
+            _get_validator()(uri)
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == (
+            "Invalid video filename. Use format: video://filename.mp4"
+        )
+
+    def test_video_uri_rejects_bad_extension_with_existing_message(
+        self, monkeypatch, tmp_path
+    ):
+        from app.routers import cameras
+
+        unsupported = tmp_path / "sample.txt"
+        unsupported.touch()
+        monkeypatch.setattr(
+            cameras,
+            "_resolve_stream_source",
+            lambda _stream_url: str(unsupported),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            cameras._validate_stream_url("video://sample.txt")
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == (
+            "Unsupported video format '.txt'. Allowed: "
+            ".avi, .flv, .m4v, .mkv, .mov, .mp4, .webm, .wmv"
+        )

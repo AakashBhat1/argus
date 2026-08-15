@@ -9,7 +9,7 @@ import {
   type ReleaseSpace,
 } from "@/lib/api";
 import { useWebSocket } from "@/lib/websocket";
-import ParkingTower3D from "@/components/ParkingTower3D";
+import LiveLotView from "@/components/parking/LiveLotView";
 import SlotGrid from "@/components/parking/SlotGrid";
 import CheckoutModal from "@/components/parking/CheckoutModal";
 import {
@@ -255,13 +255,13 @@ export default function ParkingDashboardPage() {
             <span className="text-[10px] text-slate-500 italic">Click occupied vehicle to checkout</span>
           </div>
           {mounted ? (
-            <ParkingTower3D spaces={spaces} onReleaseSpace={(id) => {
+            <LiveLotView spaces={spaces} onReleaseSpace={(id) => {
               const space = spaces.find((s) => s.space_id === id);
               if (space) handleOpenCheckout(space);
             }} />
           ) : (
             <div className="w-full h-[520px] bg-slate-900/20 border border-slate-800 rounded-2xl flex items-center justify-center text-slate-500">
-              Initializing WebGL Context...
+              Initializing Lot Stream Context...
             </div>
           )}
         </div>

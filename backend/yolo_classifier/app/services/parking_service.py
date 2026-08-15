@@ -324,6 +324,7 @@ async def release_space(
     space_pk_or_code: str,
     *,
     actor_user_id: Optional[str] = None,
+    event_type: str = 'space_released',
 ) -> Optional[dict[str, Any]]:
     """Release occupied space; compute duration + tariff."""
     space = await get_space_by_id(db, tenant_id, space_pk_or_code)
@@ -376,12 +377,21 @@ async def release_space(
             det.duration_minutes = duration_min
             det.amount_paid = amount
 
+    description = (
+        f'Vision checkout for {space_code} '
+        f'(was {plate_text or "unknown"}, {duration_min} min, '
+        f'paid: {amount} INR)'
+        if event_type == 'vision_checkout'
+        else (
+            f'Space {space_code} released (was {plate_text or "unknown"}, '
+            f'{duration_min} min, paid: {amount} INR)'
+        )
+    )
     await log_activity(
         db,
         tenant_id,
-        "space_released",
-        f"Space {space_code} released (was {plate_text or 'unknown'}, "
-        f"{duration_min} min, paid: {amount} INR)",
+        event_type,
+        description,
         plate_text=plate_text,
         space_id=space_code,
         actor_user_id=actor_user_id,

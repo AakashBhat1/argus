@@ -69,6 +69,7 @@ class CrimeClassifier:
             c.strip().lower() for c in settings.CRIME_CLASSIFIER_TRIGGER_CLASSES
         }
         self._cooldown_sec = settings.CRIME_CLASSIFIER_COOLDOWN_SEC
+        self._trigger_on_parking = settings.CRIME_CLASSIFIER_TRIGGER_ON_PARKING
         self._device_name = settings.CRIME_CLASSIFIER_DEVICE
         self._cache_dir = _backend_root() / settings.CRIME_CLASSIFIER_CACHE_DIR
 
@@ -264,11 +265,14 @@ class CrimeClassifier:
         object_id: int,
         class_label: str,
         has_intrusion: bool,
+        parking_activity: bool = False,
     ) -> bool:
         """Check if this object should be sent to the crime classifier."""
         if not self._enabled:
             return False
-        if not has_intrusion:
+        if not has_intrusion and not (
+            parking_activity and self._trigger_on_parking
+        ):
             return False
         if class_label.strip().lower() not in self._trigger_classes:
             return False
@@ -327,6 +331,7 @@ class CrimeClassifier:
         frame: np.ndarray,
         tracked_obj: dict,
         camera_id: str,
+        parking_activity: bool = False,
     ) -> Optional[CrimeResult]:
         """Classify a single tracked object for criminal activity.
 
@@ -336,7 +341,13 @@ class CrimeClassifier:
         class_label = tracked_obj.get("class_label", "")
         has_intrusion = bool(tracked_obj.get("intrusion", False))
 
-        if not self.should_classify(camera_id, object_id, class_label, has_intrusion):
+        if not self.should_classify(
+            camera_id,
+            object_id,
+            class_label,
+            has_intrusion,
+            parking_activity=parking_activity,
+        ):
             return None
 
         async with self._semaphore:
@@ -399,19 +410,26 @@ class CrimeClassifier:
         frame: np.ndarray,
         tracked_objects: list[dict],
         camera_id: str,
+        parking_activity: bool = False,
     ) -> list[CrimeResult]:
         """Classify all eligible tracked objects (those with active intrusions)."""
         if not self._enabled or not tracked_objects:
             return []
 
         tasks = [
-            self.classify_object(frame, obj, camera_id)
+            self.classify_object(
+                frame,
+                obj,
+                camera_id,
+                parking_activity=parking_activity,
+            )
             for obj in tracked_objects
             if self.should_classify(
                 camera_id,
                 obj.get("object_id", -1),
                 obj.get("class_label", ""),
                 bool(obj.get("intrusion", False)),
+                parking_activity=parking_activity,
             )
         ]
 

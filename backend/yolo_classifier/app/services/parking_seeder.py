@@ -48,6 +48,21 @@ async def seed_parking_spaces_for_tenant(
     if not tenant_id:
         raise ValueError("tenant_id is required")
 
+    mapped_result = await db.execute(
+        select(func.count(ParkingSpace.id)).where(
+            ParkingSpace.tenant_id == tenant_id,
+            ParkingSpace.camera_id.is_not(None),
+        )
+    )
+    mapped = int(mapped_result.scalar_one() or 0)
+    if mapped > 0:
+        logger.info(
+            'Parking seeder: tenant=%s has %s mapped spaces - skip legacy layout',
+            tenant_id,
+            mapped,
+        )
+        return 0
+
     count_result = await db.execute(
         select(func.count(ParkingSpace.id)).where(ParkingSpace.tenant_id == tenant_id)
     )

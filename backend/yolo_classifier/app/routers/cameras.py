@@ -14,6 +14,7 @@ from app.models import (
 )
 from app.schemas import CameraCreate, CameraUpdate, CameraResponse
 from app.services.auth import get_current_active_user
+from app.services.stream_manager import _resolve_stream_source
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -30,7 +31,6 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("169.254.0.0/16"),
 ]
 
-_VIDEO_DIR = Path(__file__).resolve().parents[2] / "video"
 _VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".webm", ".flv", ".wmv", ".m4v"}
 
 
@@ -57,8 +57,9 @@ def _validate_stream_url(stream_url: str):
                 status_code=422,
                 detail="Invalid video filename. Use format: video://filename.mp4",
             )
-        video_path = _VIDEO_DIR / filename
-        if not video_path.is_file():
+        resolved_source = _resolve_stream_source(value)
+        video_path = Path(resolved_source)
+        if resolved_source == value or not video_path.is_file():
             raise HTTPException(
                 status_code=422,
                 detail=f"Video file '{filename}' not found in video folder.",

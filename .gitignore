@@ -110,3 +110,17 @@ backend/docs/
 
 # Local launcher script containing credentials
 start-relay.ps1
+
+# Local-only "dance mode" easter egg — kept on disk, never committed.
+# Reachable locally at /dance; nothing tracked imports it, so removing these
+# from the repo cannot break the build. If you wire it into a tracked file
+# again, that file must not be committed either.
+frontend/src/app/dance/
+frontend/src/components/DanceBuildingScreen.tsx
+frontend/public/cat-scuba-cat.gif
+frontend/public/dancing_cat.jpg
+frontend/public/dancing_cat_real.gif
+frontend/public/good-morning.gif
+frontend/public/tame_impala.mp3
+frontend/public/techno_dance.wav
+song/

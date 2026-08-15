@@ -225,6 +225,30 @@ class Settings(BaseSettings):
     # Local directory to cache the downloaded model.
     CRIME_CLASSIFIER_CACHE_DIR: str = "models/crime_classifier"
 
+    CRIME_CLASSIFIER_TRIGGER_ON_PARKING: bool = True
+
+    # -- Vision parking occupancy --------------------------------------------
+    PARKING_OCCUPANCY_ENABLED: bool = True
+    PARKING_OCCUPANCY_INTERVAL_SEC: float = 2.0
+    PARKING_OCCUPANCY_HI: float = 0.22
+    PARKING_OCCUPANCY_LO: float = 0.10
+    PARKING_OCCUPANCY_IOU_MIN: float = 0.40
+    PARKING_OCCUPANCY_DEBOUNCE_FRAMES: int = 5
+
+    # -- Parking anomaly rules ------------------------------------------------
+    PARKING_ANOMALY_ENABLED: bool = True
+    PARKING_ANOMALY_COOLDOWN_SEC: float = 300.0
+    PARKING_GHOST_OCCUPANCY_MIN: float = 10.0
+    PARKING_GHOST_PLATE_LOOKBACK_MIN: float = 15.0
+    PARKING_LOITER_MIN_SEC: float = 45.0
+    PARKING_CAR_HOP_MIN_SLOTS: int = 3
+    PARKING_CAR_HOP_MIN_STATIONARY: float = 0.35
+    PARKING_CHURN_THRESHOLD: int = 6
+    PARKING_CHURN_WINDOW_MIN: float = 15.0
+    PARKING_QUIET_HOURS_START: int = 22
+    PARKING_QUIET_HOURS_END: int = 6
+    PARKING_QUIET_HOURS_TZ: str = 'UTC'
+
     # -- Data Retention -------------------------------------------------------
     RETENTION_ENABLED: bool = True
     RETENTION_DAYS: int = 30

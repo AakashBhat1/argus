@@ -63,7 +63,8 @@ class Camera(Base):
     status = Column(String(20), default=CameraStatus.INACTIVE.value)
     resolution = Column(String(20), default="1280x720")
     fps = Column(Integer, default=30)
-    # surveillance | gate_entry | gate_exit — gate roles trigger OCR on ROI collision
+    # surveillance | gate_entry | gate_exit | parking
+    # Gate roles trigger OCR; parking enables vision occupancy.
     role = Column(String(20), default="surveillance")
     # Polygon defining the OCR trigger zone: list of {x,y} in normalized [0,1] or pixel coords
     gate_roi = Column(JSON, nullable=True)
@@ -280,6 +281,11 @@ class ParkingSpace(Base):
     # FK on surrogate id, NOT plate_text — avoids cross-tenant natural-key collisions
     vehicle_id = Column(String(36), ForeignKey("vehicle_profiles.id"), nullable=True)
     entry_time = Column(DateTime, nullable=True)
+    camera_id = Column(String(36), ForeignKey('cameras.id'), nullable=True, index=True)
+    polygon = Column(JSON, nullable=True)
+    display_order = Column(Integer, default=0, nullable=False)
+    detection_source = Column(String(20), default='manual', nullable=False)
+    last_state_change = Column(DateTime, nullable=True)
 
     vehicle = relationship("VehicleProfile", back_populates="parking_spot")
 

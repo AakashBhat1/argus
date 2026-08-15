@@ -14,6 +14,11 @@ from app.detection.roi import IntrusionEvent
 from app.models import Alert, AlertSeverity, Camera, Detection
 from app.services.intrusion_pipeline import IntrusionPipeline, PipelineResult
 from app.services.metrics import inference_metrics
+from app.services.parking_occupancy_service import (
+    apply_occupancy_tick,
+    persist_anomaly_alerts,
+    warm_camera_slots,
+)
 from app.services.crime_classifier import crime_classifier
 from app.services.roboflow_classifier import roboflow_classifier
 from app.services.websocket_manager import ws_manager
@@ -30,10 +35,30 @@ def _resolve_stream_source(stream_url: str):
     value = stream_url.strip()
     if value.isdigit():
         return int(value)
-    if value.startswith("video://"):
-        filename = value[len("video://"):]
-        video_dir = Path(__file__).resolve().parents[2] / "video"
-        return str(video_dir / filename)
+    if value.startswith('video://'):
+        filename = value[len('video://'):]
+        relative_path = Path(filename)
+        if (
+            not filename
+            or relative_path.is_absolute()
+            or '..' in relative_path.parts
+        ):
+            logger.warning('Rejected unsafe video:// source: %s', value)
+            return value
+        candidate_roots = (
+            Path(__file__).resolve().parents[2] / 'video',
+            Path(__file__).resolve().parents[4] / 'video',
+        )
+        for root in candidate_roots:
+            candidate = (root / relative_path).resolve()
+            try:
+                candidate.relative_to(root.resolve())
+            except ValueError:
+                continue
+            if candidate.exists():
+                return str(candidate)
+        logger.warning('video:// source not found in configured roots: %s', value)
+        return value
     return value
 
 
@@ -67,10 +92,12 @@ class VideoStream:
         self.stream_url = camera.stream_url
         self.camera_name = camera.name
         self.tenant_id = camera.tenant_id
+        self.camera_role = camera.role or 'surveillance'
         self._pipeline = IntrusionPipeline(
             camera_id=str(camera.id),
             camera_name=camera.name,
             tenant_id=camera.tenant_id,
+            camera_role=self.camera_role,
         )
         self._inference_pool = inference_pool
 
@@ -100,6 +127,14 @@ class VideoStream:
         """
         if self._running:
             return True
+
+        if self.camera_role == 'parking':
+            try:
+                await warm_camera_slots(str(self.camera_id), self.tenant_id)
+            except Exception:
+                logger.exception(
+                    'Failed to warm parking slots for camera %s', self.camera_id
+                )
 
         # Preflight validation prevents false-positive "started" responses.
         test_cap = _open_capture(self.stream_url)
@@ -278,11 +313,40 @@ class VideoStream:
                         self._roboflow_enrich(frame.copy(), tracked, intrusion_events)
                     )
 
-                # Fire ViT crime classification (non-blocking, only on intrusion)
-                crime_results_payload: list[dict] = []
-                if intrusion_events and crime_classifier.enabled:
+                if pipeline_result.slot_readings:
                     asyncio.create_task(
-                        self._crime_classify(frame.copy(), tracked, intrusion_events)
+                        apply_occupancy_tick(
+                            str(self.camera_id),
+                            self.tenant_id,
+                            pipeline_result.slot_transitions,
+                        )
+                    )
+                if pipeline_result.parking_anomaly_alerts:
+                    asyncio.create_task(
+                        persist_anomaly_alerts(
+                            pipeline_result.parking_anomaly_alerts
+                        )
+                    )
+
+                # Fire ViT classification for intrusion or parking activity.
+                crime_results_payload: list[dict] = []
+                parking_trigger = (
+                    self.camera_role == 'parking'
+                    and any(
+                        str(obj.get('class_label', '')).lower() == 'person'
+                        for obj in tracked
+                    )
+                )
+                if crime_classifier.enabled and (
+                    intrusion_events or parking_trigger
+                ):
+                    asyncio.create_task(
+                        self._crime_classify(
+                            frame.copy(),
+                            tracked,
+                            intrusion_events,
+                            parking_activity=parking_trigger,
+                        )
                     )
 
                 if tracked or intrusion_events:
@@ -296,6 +360,7 @@ class VideoStream:
                     "detections": tracked,
                     "intrusions": intrusion_payload,
                     "crime_classifications": crime_results_payload,
+                    "parking_slots": pipeline_result.slot_payload(),
                     "fps": round(self._fps, 1),
                     "frame_width": int(frame.shape[1]),
                     "frame_height": int(frame.shape[0]),
@@ -521,11 +586,15 @@ class VideoStream:
         frame: np.ndarray,
         tracked_objects: list[dict],
         intrusion_events: list[IntrusionEvent],
+        parking_activity: bool = False,
     ):
         """Run ViT crime classification in background, store results and alert on crimes."""
         try:
             results = await crime_classifier.classify_batch(
-                frame, tracked_objects, str(self.camera_id)
+                frame,
+                tracked_objects,
+                str(self.camera_id),
+                parking_activity=parking_activity,
             )
             if not results:
                 return
@@ -545,6 +614,7 @@ class VideoStream:
                         select(Detection.id)
                         .where(
                             Detection.camera_id == str(self.camera_id),
+                            Detection.tenant_id == self.tenant_id,
                             Detection.object_id == cr_result.object_id,
                         )
                         .order_by(Detection.timestamp.desc())
