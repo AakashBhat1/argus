@@ -10,7 +10,10 @@ Self-hosted, real-time multi-camera surveillance with YOLO/OpenVINO detection, r
 ## Features
 
 - Runs multi-camera object detection through a batched OpenVINO inference pipeline.
-- Tracks people and evaluates dwell time inside configurable regions of interest.
+- Tracks people and evaluates dwell time inside configurable regions of interest, anchored on the foot point and resilient to short detector dropouts and track-ID switches.
+- Scores every tracked person with a contextual risk engine (zone type, arming schedule, dwell, origin, behaviour, time of day, group contacts, plate/manual authorization) and raises one alert per incident instead of per frame.
+- Estimates metric distance and ground position per detection from a pinhole camera model, optionally refined with a four-point ground-plane calibration.
+- Ships a Security Console: arm/disarm, expected-visitor and vehicle grants, live risk timeline, and an escalation feed.
 - Delivers live detections and alerts over authenticated WebSocket channels.
 - Streams browser-compatible live video through MediaMTX and WebRTC.
 - Provides camera management, alert review, analytics, and inference metrics in a responsive dashboard.
@@ -112,6 +115,16 @@ The checked-in example files document the available settings:
 - [Frontend API, WebSocket, and MediaMTX URLs](frontend/.env.example)
 
 Keep real credentials in ignored `.env` files. Do not commit model weights, camera credentials, tokens, or production endpoints.
+
+## Demo walkthrough: contextual intrusion
+
+1. **Cameras → Zones**: draw a polygon, pick a *zone type* (`restricted`, `perimeter`, `entrance`, `driveway`, `parking`, `public`) and an *arming schedule* (always, never, or time windows). Public zones never alert; restricted zones alert on dwell.
+2. **Cameras → Calibration**: set the horizontal FOV, or click the four corners of a known rectangle on the ground (e.g. a parking bay) and enter its size. Distance labels on the live feed switch from `pinhole` to `metric`.
+3. **Security Console**: set the site to `armed`, `auto` (follow zone schedules) or `disarmed`. Grant an expected visitor, or simulate a gate plate read for an authorized or blacklisted vehicle.
+4. **Live feed**: each person shows distance, risk score and level. A person who steps out of an authorized car, or who the operator marks as known, is scored `authorized` and never alerts. A stranger dwelling in an armed restricted zone becomes an incident once; a blacklisted plate, a crime-classifier hit, or a prolonged close contact between two people adds to the score and pushes it toward `critical`.
+5. **Escalation feed / Alerts**: only `alert` and `critical` transitions are persisted, with the human-readable reasons that produced the score.
+
+The ROI dwell threshold, grace period, score thresholds, quiet hours and close-contact rules are all tunable in the backend `.env` (see the "Contextual intrusion / risk engine" block in [the example file](backend/yolo_classifier/.env.example)).
 
 ## Validation
 

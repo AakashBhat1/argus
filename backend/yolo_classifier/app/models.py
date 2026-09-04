@@ -68,6 +68,9 @@ class Camera(Base):
     role = Column(String(20), default="surveillance")
     # Polygon defining the OCR trigger zone: list of {x,y} in normalized [0,1] or pixel coords
     gate_roi = Column(JSON, nullable=True)
+    # Camera geometry calibration: {hfov_deg, homography_image_points,
+    # homography_world_points, class_sizes_m}. See app.detection.geometry.
+    calibration = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     is_active = Column(Boolean, default=True)

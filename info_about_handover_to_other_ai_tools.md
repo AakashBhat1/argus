@@ -4,26 +4,32 @@
  This file is the single source of truth for who works on this repo next.
  Claude  = senior reviewer/architect/planner (writes this file, never code).
  codex   = MAIN backend implementer — AVAILABLE.
- grok    = UNAVAILABLE as of 2026-08-14. Its lane folds into codex.
  antigravity = frontend + validation.
+ cursor  = BACKUP member (on-demand implementer, overflow, unblocking) — AVAILABLE 2026-09-04.
+ grok    = UNAVAILABLE as of 2026-08-14. Its lane folds into codex/cursor.
  Implementers do the work and flip the switch back to claude.
 =========================================================================
 -->
 ---
-current_session_worker: claude      # <-- THE SWITCH. Only this agent acts.
-board_status: ROUND 5 OPEN — FE-12 verified PASS (all three breaks genuinely fixed). VAL-10 PARTIAL — steps 3/4/6/9/10/11 now have real automated coverage, steps 5 and 7 still unrun. Four new findings: VAL-11 (no regression guard on the FE-12 defect class), ARCH-9 (two divergent video:// resolvers), SEC-11 (reset_admin.py hardcodes admin/admin), FE-14 (Low frontend). codex takes the three backend items first.
-last_updated_by: codex
-last_updated_at: 2026-08-15T11:28:03Z
+current_session_worker: claude      # <-- BOARD CLOSED. No implementer acts. See board_status.
+board_status: **BOARD CLOSED 2026-09-04.** SEC-14 verified PASS (CI run 33894866425: 132 collected, 131 passed, 1 deselected) — including a direct test that a recently-locked username survives the sweep and keeps its `lockout_level`, which was the trap in that fix. **Across 8 rounds every Critical and High is fixed and CI-defended; 45 items done, 0 routed items remain.** Nothing is assigned to any implementer — codex, antigravity and cursor all stand down. What is left is not agent work: **SEC-12** (watermarked iStock clip in a PUBLIC repo — user's decision, may need a history rewrite), **HYG-3** (commit hygiene — user's decision), and **ACC-1** (one visual check, waits for a real deployment). Reopen only if the user decides SEC-12 or brings new work.
+last_updated_by: claude
+last_updated_at: 2026-09-04T17:05:00Z
 codex_status: AVAILABLE               # main backend — owns ALL backend this round
+cursor_status: AVAILABLE              # backup member; user has Cursor Pro + the multi-agent skill as of 2026-09-04
 grok_status: UNAVAILABLE              # confirmed by the user 2026-08-14; do not route work to grok
 agents:
   - claude        # senior dev: review, plan, design, pipeline, route. NEVER implements.
   - codex         # MAIN backend: APIs, business logic, data layer, algorithms. ALL backend this round.
-  - grok          # UNAVAILABLE this round. No media-generation work outstanding, so nothing is stranded.
   - antigravity   # frontend (UI/components/styling) + validation/QA passes.
+  - cursor        # BACKUP member: on-demand implementer, overflow, unblocking. Acts when assigned OR when the user prompts it directly.
+  - grok          # UNAVAILABLE this round. No media-generation work outstanding, so nothing is stranded.
 protocol: |
   1. Each agent reads `current_session_worker` first.
   2. If it is not your name, STOP — do nothing, it is not your turn.
+     EXCEPTION (cursor only): cursor may also act when the user prompts it
+     directly as backup. When it does, it takes the switch — so do not prompt
+     cursor while another implementer is mid-turn.
   3. If it is your name, do ONLY the task-board rows with `assigned_to: <you>`
      and `status: todo`, following each finding's acceptance criteria. Mark them
      done, then set `current_session_worker` to the next agent and update
@@ -38,10 +44,11 @@ protocol: |
      contract), **ARCH-9**, **SEC-11** → codex; **FE-14** and **VAL-10r**
      (VAL-10 steps 5 and 7 only) → antigravity. All earlier rows stay `done`.
 routing:
-  backend:            codex   # grok UNAVAILABLE — no spillover target; codex takes all backend
-  video_photo_media:  —       # grok unavailable; no media work this round
+  backend:            codex        # first for all backend; spill to cursor when saturated
+  backup_ondemand:    cursor       # backup member: overflow, cross-cutting work, unblocking
   frontend:           antigravity
   validation:         antigravity
+  video_photo_media:  —            # grok unavailable; no media work outstanding
   design_plan_route:  claude
 ---
 
@@ -56,10 +63,314 @@ routing:
 
 ## Current status
 
-- **Worker now:** `codex` (VAL-11 → ARCH-9 → SEC-11)
-- **Last review:** 2026-08-15 (claude, round-5 verification pass)
-- **Open items:** 5 (VAL-11, ARCH-9, SEC-11 → codex; FE-14, VAL-10 residual → antigravity)
-- **Done:** 36  |  **Closed won't-do:** 1 (FE-9 — superseded by FE-13)
+- **Worker now:** nobody. **The board is CLOSED** as of 2026-09-04. `claude` holds the switch so no implementer picks anything up.
+- **Last review:** 2026-09-04 (claude, round-8 closing pass). **SEC-14 verified PASS** against CI run 33894866425.
+- **Open items:** **0 routed.** 2 user decisions (**SEC-12**, **HYG-3**) + 1 deferred (**ACC-1**, deployment-time). None is agent work.
+- **Done:** 45  |  **Closed won't-do:** 1 (FE-9)  |  **Superseded:** VAL-10r step 7 (by VAL-11)  |  **Accepted-blocked:** VAL-10r step 5.
+- **Every Critical and High across eight rounds is fixed and CI-defended.** That last clause is the one that took longest to become true.
+- **Roster:** 5 agents. **cursor** remains available and still unexercised.
+- **"Green" now means green in CI.** Run **33889258586** is the first passing CI in this repo's history; every test claim from here cites a run id.
+
+> ## CLOSING PASS — SEC-14 verified. The board is closed.
+>
+> **SEC-14 — PASS.** CI run **33894866425 (success)**: `collected 132 items /
+> 1 deselected / 131 selected`, `131 passed`.
+>
+> The fix is better than eviction alone. Entries are no longer created on *every*
+> call — `defaultdict` and `setdefault` are gone, replaced by `get()` with
+> construction moved into the failure branch, so a successful login now allocates
+> nothing at all. On top of that: inline eviction of the touched username/IP on
+> each `evaluate()`, plus a `_sweep_expired()` every `sweep_interval` (128)
+> evaluations — a counter-driven sweep with no background task, exactly the shape
+> the brief asked for.
+>
+> **The part I was most concerned about is the part that is most carefully done.**
+> I warned that evicting a locked or recently-locked username would reset an
+> attacker's `lockout_level` escalation — a fix that makes things worse.
+> `_username_state_expired()` computes
+> `retention_until = max(locked_until, last_failure_at + username_window_seconds)`
+> and refuses to evict until that has passed *and* the failure deque is empty. So
+> state outlives the lockout by a full 15-minute window, and escalation survives.
+> An attacker cannot reset their own backoff by pausing briefly; pausing long
+> enough to reset costs them 15 minutes, which throttles them further than the
+> lockout did.
+>
+> And it is **tested directly**, not merely implemented:
+> `test_recent_lockout_survives_sweeps_and_preserves_escalation_level` asserts the
+> retained state still reads `lockout_level == 1` after a sweep, escalates to `2`
+> on the next burst, and only then disappears. That is the trap being verified as
+> closed, which is the difference between a fix and a fix you can trust.
+>
+> ## Closing the board
+>
+> **Eight rounds. 45 items done. Every Critical and High fixed — and, since run
+> 33889258586, actually defended by tests that execute rather than tests that
+> exist.** That last distinction was the single most valuable thing this board
+> found, and it was found by asking one question nobody had asked for four rounds:
+> *did CI go green?* It had never gone green. The suite had never run once.
+>
+> **Nothing remains that an implementer should do.** Three items are open and none
+> of them is agent work:
+> - **SEC-12** — the watermarked iStock clip in a **public** repo. A licensing
+>   judgement plus a possibly-destructive history rewrite. The user's call, and
+>   four options are written up above.
+> - **HYG-3** — commit hygiene. Largely self-corrected: `1e9bea0`, `38b5918`,
+>   `00ae8b4` and `8f8688d` are each one item under a conventional message with
+>   its own green CI run. The historical `55eb61b` bundle stays as it is unless
+>   the user wants history touched.
+> - **ACC-1** — one visual confirmation that a bay flips red. Waits for a real
+>   deployment; the contract beneath it is guarded by VAL-11 on every push.
+>
+> **What I would keep if this board is ever reopened:** the rule that *green means
+> green in CI*. It cost this project four rounds of false confidence — including
+> two of my own "reproduced locally" claims that I could not have reproduced —
+> and one CI run id settled it permanently.
+
+> ## ROUND 8 — Both items pass. And I got SEC-13's severity wrong; here is the correction.
+>
+> **SEC-13 — PASS, and the implementation is better than the brief I wrote.**
+> Verified against CI run **33893670256 (success)**, `130 collected, 129 passed`.
+> Every requirement is met: per-IP *and* per-username limiting; progressive
+> lockout that is exponential (`base * 2**(level-1)`) and **capped at 15 minutes**,
+> so it is time-boxed and a locked-out operator always recovers; the timing oracle
+> closed by verifying against `DUMMY_PASSWORD_HASH` when the user does not exist,
+> so both branches pay identical bcrypt cost; failed attempts logged at WARNING
+> with username, source IP and reason; the generic 401 body and status untouched;
+> and `reset()` for test isolation, so the limiter did not have to be loosened to
+> a number that never fires in production. `evaluate()` does all of it under one
+> `Lock`, as a single atomic read-modify-write.
+>
+> **Two things it did that I did not ask for and that are correct.** First,
+> `_source_ip()` only trusts `X-Real-IP` when the *direct peer* is loopback or
+> private — otherwise a public attacker could forge the header and get a fresh
+> rate-limit bucket per request, defeating the per-IP control entirely. That is
+> the exact failure mode naive header-trusting throttles have, and nginx does set
+> `X-Real-IP $remote_addr`, so the two halves match. Second, the docstring states
+> the single-worker assumption instead of hiding it — **and I checked it rather
+> than taking it on faith**: `Dockerfile:45` is
+> `uvicorn app.main:app --host 0.0.0.0 --port 8000` with no `--workers`, and
+> compose adds no override. The assumption is true today. It is also the thing
+> that breaks first if anyone ever scales the API out, which is why having it
+> written down matters.
+>
+> **ARCH-10 — PASS.** Textbook double-checked locking: check, acquire, re-check,
+> construct. `__getattr__` and the public surface are unchanged, so none of the
+> five `detector` import sites moved.
+>
+> ## Correction: I overstated SEC-13, and the same way I have been criticising others.
+>
+> I wrote that `/auth/token` "will answer guesses as fast as they arrive,
+> forever." **That was wrong.** `nginx/nginx.conf:8` has carried
+> `limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=10r/m` since before
+> this round, applied at `location = /api/v1/auth/token` with `burst=5 nodelay`
+> and `limit_req_status 429` — and `docker-compose.yml` binds the backend to
+> `127.0.0.1:8000`, so the proxy cannot be bypassed from outside. A per-IP rate
+> limit existed the whole time.
+>
+> **How I got it wrong is the part worth recording.** I grepped `app/` for
+> `slowapi`/limiter, found nothing, and reported "no rate limiting" — a conclusion
+> about the *system* drawn from a search of one *directory*. My sentence "I
+> grepped the whole `app/` tree" was literally true and the inference on top of it
+> was not. That is precisely the failure this board has been holding other agents
+> to for eight rounds: verifying the easy artifact and reporting it as
+> verification of the feature. It is worse coming from the reviewer, because
+> nobody downstream re-checks me.
+>
+> **The finding was still real, and codex's work was still worth doing** — I want
+> to be equally clear about that, because "I was wrong about the severity" is not
+> "this was wasted":
+> - nginx limits **per IP**. It does nothing against a distributed spray at one
+>   account: 10r/m × N botnet IPs is unbounded against `admin`. Account lockout is
+>   the only control that addresses that, and there was none.
+> - There was **no record** that a failed login ever happened. In a surveillance
+>   product, an invisible brute-force attempt is its own defect.
+> - The **timing oracle was real** and entirely independent of any rate limit.
+>
+> So: right finding, right fix, **wrong severity and wrong headline**. Revised
+> High → Medium on the board above, with the reason attached rather than quietly
+> edited.
+>
+> ## One Low left, and it is in the new code.
+>
+> `LoginAttemptLimiter` **never evicts**. `_username_states` entries are removed
+> only on a *successful* login; `_ip_failures` is a `defaultdict(deque)` whose
+> deques are pruned of old timestamps but never themselves removed. So every
+> distinct username and every distinct source IP ever seen leaves a permanent
+> entry, reachable **pre-authentication**. nginx's 10r/m keeps the growth slow
+> rather than explosive, which is why this is **Low and not High** — but it is
+> unbounded, it needs no credentials, and it sits inside the control that exists
+> to absorb hostile traffic. That is SEC-14, and it is the last item on this
+> board.
+
+> ## ROUND 7 — The guards run now. That is the round-6 headline and it is verified.
+>
+> **CI-1 — PASS, and I confirmed it from the CI log, not the handoff note.**
+> `gh run list` shows run **33889258586 — success**, the first green run in this
+> repository's history. Inside the log:
+>
+> ```
+> Run python -m pytest -m "not requires_model"
+> collected 123 items / 1 deselected / 122 selected
+> backend/yolo_classifier/tests/test_parking_live_stream.py .....   [ 67%]
+> ============ 122 passed, 1 deselected, 10 warnings in 24.59s ============
+> ```
+>
+> That fourth line is the one that matters. **`test_parking_live_stream.py .....`
+> — all five VAL-11 tests executed and passed on a clean Ubuntu runner with no
+> model weights.** The three crime-wiring parametrisations appear by name in the
+> log. The guard the board has been arguing about for two rounds is now a thing a
+> machine re-checks on every push. Alembic upgrade/downgrade ran green after it.
+>
+> **The implementation is the right one.** `_LazyOpenVINODetector` memoises behind
+> `__getattr__`, so all five `detector` import sites keep working untouched, and I
+> grepped for `isinstance(..., OpenVINODetector)` — there are none, which is the
+> one thing a proxy like this usually breaks. `main.py` calls
+> `detector.initialize().get_model_info()` in lifespan **before** `init_db()`, so
+> a missing model still fails loudly and early — the eager check moved, it did not
+> disappear. CI deselects by marker (`-m "not requires_model"`), exactly one test,
+> with the marker registered in `pyproject.toml`: no ignored modules, no
+> `continue-on-error`, which is precisely what the brief forbade.
+>
+> **`test_detection_lifecycle.py` deserves specific credit.** It runs both checks
+> in a **clean subprocess** with `OPENVINO_MODEL_PATH` aimed at a nonexistent file
+> — asserting `import app.detection` exits 0, and that startup still raises
+> `FileNotFoundError` with the exact message. An in-process test would have been
+> poisoned by earlier imports and would have passed for the wrong reason. Choosing
+> a subprocess here is the difference between a guard and a decoration.
+>
+> Also worth noting: `1e9bea0` is 6 files and 95 insertions under the message
+> `fix(ci): defer OpenVINO model loading to startup`. That is exactly the commit
+> hygiene HYG-3 asked for, done without being told.
+>
+> **FE-14 — PASS, both halves.** `websocket.ts:30` opens `connect` with
+> `if (!channel) return;` — no handshake before a camera is selected, and it
+> benefits every caller of the hook. The fallback is now genuinely visible rather
+> than silent: an amber `Fallback: Non-parking` badge, an
+> `<optgroup label="Non-Parking Cameras (Fallback)">`, an amber select border, a
+> `title` tooltip, and per-option role/location labels instead of calling a
+> perimeter camera a "Parking Feed" — and it propagates into the SlotMapper modal
+> title, which I did not ask for and which is the right call, since that modal is
+> where bays actually get drawn onto the wrong camera. `tsc --noEmit` clean.
+>
+> ## VAL-10r — blocked, honest, and I am closing it rather than asking a fifth time.
+>
+> **The blocked report is accurate and I can corroborate it independently.**
+> antigravity reports no `.venv`, Python 3.12 missing `sqlalchemy` and `openvino`,
+> and no `*.xml` weights. I found exactly the same thing last round before reading
+> its note: **18 of 33 dependencies missing**, `conftest.py` unable to import, and
+> `models/` gitignored. This is a real constraint, not an excuse, and it is the
+> first time this lane has said "blocked" instead of describing source code as an
+> observation. **That is the behaviour the board asked for, and it is credited
+> without argument, exactly as promised.**
+>
+> **Step 7 is closed — superseded by VAL-11.** I went back and checked whether the
+> manual step still had substance, and it does not. Step 7 asked: does a crime
+> alert fire from a *parking* camera while a perimeter camera stays unchanged?
+> `test_parking_crime_wiring_requires_role_and_person_track` asserts exactly that
+> — `("parking","person",True)`, `("surveillance","person",False)`,
+> `("parking","car",False)` — and those three cases **ran in CI run
+> 33889258586**. Re-running it by hand with a lowered confidence threshold would
+> tell us less than the test already does, every push. Asking for it again would
+> be ritual.
+>
+> **Step 5 is reclassified, not re-routed.** The genuine residual is one thing:
+> *does the canvas overlay visibly flip a bay red as a car parks?* That needs a
+> browser in front of a running inference stack. Neither agent has one; I do not
+> have one. Handing it to a fourth agent round would fail a fifth time for the
+> same reason it failed the first four. It moves to **ACC-1**, a deployment-time
+> acceptance check for whoever next runs the stack — see round 7. The contract
+> underneath it is already guarded by VAL-11.
+
+> ## ROUND 6 — All three round-5 items pass on their own terms. And none of them run.
+>
+> This is the verification pass that was owed. I checked codex's three items
+> against their own "Done when" criteria, and then I checked the thing nobody had
+> checked: **whether any of it executes anywhere except on codex's machine.**
+>
+> **ARCH-9 — PASS, cleanly.** `cameras.py` no longer walks the tree; it imports
+> `_resolve_stream_source` from `stream_manager` and delegates
+> (`cameras.py:17`, `:62`). Exactly one `video://` resolver exists now — I
+> grepped for a second and there is none. I also checked the thing the brief
+> warned about: **error precedence is genuinely unchanged.** I diffed against
+> `55eb61b~1`, where the old code did `video_path = _VIDEO_DIR / filename` then
+> `is_file()` — a nonexistent `.txt` returned "not found" there too, so routing
+> the extension check behind the resolver changed no message. The agreement tests
+> at `test_03_stream_url_ssrf.py:87-140` cover resolvable, missing, separator and
+> bad-extension, and the extension case monkeypatches the resolver so that branch
+> stays reachable. That is careful work.
+>
+> **SEC-11 — PASS, and better than the brief asked.** No default, no print, and
+> the env check returns `1` **before** `init_db()` so a missing password cannot
+> even touch the database. I also checked what the brief could not: **the
+> hardcoded version never entered git history.** `git log -p --all` on that path
+> shows one commit and no `get_password_hash("admin")` and no `Password: admin`
+> in any committed revision. So there is **no credential to rotate** — the fix
+> landed before the file was ever tracked. That is the good outcome.
+>
+> **VAL-11 — PASS on authorship. The guard is real.** I traced each mutation the
+> brief demanded, statically, against the production code at
+> `stream_manager.py:353-373`: retargeting `broadcast_detections` to `"parking"`
+> breaks `args[0] == camera.id`; dropping `frame_image` or renaming
+> `parking_slots` raises `KeyError`; renaming the transition `slots` breaks
+> `set(message["data"]) == {"event","camera_id","slots"}`, which is an **exact**
+> set comparison and therefore catches renames in both directions. The step-7
+> parametrisation is the part I want to credit specifically — `("parking",
+> "person", True)`, `("surveillance", "person", False)`, `("parking", "car",
+> False)` pins **both halves** of the `parking_trigger` condition, so deleting
+> either conjunct turns it red. This is the guard the board asked for, written
+> next to the code it guards.
+>
+> ## But the guard has never executed. Neither has any other test.
+>
+> **CI has never been green — not once.** There is exactly one CI run in the
+> repo's history (`31885268126`, on `55eb61b`, 2026-08-15) and it **failed** in
+> 1m16s. It did not fail on an assertion. It never got that far:
+>
+> ```
+> Interrupted: 6 errors during collection
+> ERROR tests/test_parking_live_stream.py - FileNotFoundError:
+>   OpenVINO model not found: .../models/yolo26n_int8.xml
+> ```
+>
+> Six files error at **collection**, `test_parking_live_stream.py` — the VAL-11
+> guard itself — among them. pytest aborts the session on collection errors, so
+> the true count of tests that have ever run in CI is **zero**.
+>
+> **The root cause is one line.** `app/detection/engine.py:801` is
+> `detector = OpenVINODetector()` at module scope, and `__init__` calls
+> `_load_model()`, which raises `FileNotFoundError` when the weights are absent
+> (`engine.py:263-266`). `models/` is gitignored (`.gitignore:73`) and
+> `backend-ci.yml` has **no** conversion, download or cache step — I grepped it.
+> So importing anything downstream of `app.detection` requires model weights that
+> CI structurally cannot have. `mock_inference_pool` cannot help: the failure is
+> at import, before any fixture runs.
+>
+> **This is the same shape as every headline defect on this board.** Two correct
+> halves — good tests, a real CI workflow — and an untested seam between them.
+> PIPE-4 was marked done because the workflow file exists and its YAML parses.
+> Nobody asked the only question that matters: *did it go green?* It did not, and
+> it has been red since the day it was added.
+>
+> **On codex's "120 collected / 120 passed".** I could not reproduce it — this
+> machine is missing **18 of 33** project dependencies (no `sqlalchemy`, so
+> `conftest.py` cannot even import) and the versions that are present are not the
+> pinned ones (`fastapi` 0.141.1 vs 0.109.2, `numpy` 2.5.2 vs 1.26.4, `torch`
+> 2.13 vs 2.5.1). I have no reason to doubt the number **locally** — codex has the
+> weights, so collection succeeds there. The failure is not dishonesty; it is that
+> a local green and a CI green were treated as the same fact. They are not, and
+> the gap between them is exactly where this defect lived.
+>
+> **I am also correcting my own record.** Earlier rounds of this file say I
+> "reproduced the suite locally" (71/71, 74/74, 109/109). I cannot run it in this
+> environment today and I am not going to let those numbers stand as if I could
+> re-check them on demand. **From CI-1 onward, green means green in CI** — that is
+> the only environment either of us can point at and both trust.
+>
+> **What I did not do:** I did not run the mutations myself. Doing so needs either
+> a production edit (forbidden here) or a working environment (absent). The static
+> trace above is what I actually have, and I am labelling it as such rather than
+> reporting it as an execution. **CI-1 is what converts every one of these
+> judgements into something a machine re-checks on every push.**
 
 > ## ROUND 5 — FE-12 is genuinely fixed. VAL-10 is half-done. The guard that would have caught FE-12 still does not exist.
 >
@@ -404,13 +715,93 @@ antigravity**. grok is idle this round — no media work outstanding.
 
 | ID | Lens | Title | Severity | Complexity | assigned_to | status | files |
 |----|------|-------|----------|------------|-------------|--------|-------|
-| VAL-11 | validation | **No test asserts a `detections` message ever reaches a subscriber — FE-12 can regress silently** | High | Med | codex | done | tests/test_parking_live_stream.py (new) |
-| ARCH-9 | design | **Two divergent `video://` resolvers** — `cameras.py` validates with a 6-level parent walk, `stream_manager.py` resolves with BE-7's containment-checked logic | Medium | Low | codex | done | app/routers/cameras.py:57, app/services/stream_manager.py:34 |
-| SEC-11 | security | **`scripts/reset_admin.py` hardcodes an `admin`/`admin` reset and prints the password** | Medium | Low | codex | done | backend/yolo_classifier/scripts/reset_admin.py |
-| FE-14 | design | Unbriefed camera-dropdown fallback + a doomed WS handshake on the empty initial channel | Low | Low | antigravity | todo | frontend/src/components/parking/LiveLotView.tsx, frontend/src/lib/websocket.ts |
-| VAL-10r | validation | VAL-10 residual — steps **5 and 7 only**, the two that need a running app | Medium | Med | antigravity | todo | (observe delivered work) |
+| VAL-11 | validation | **No test asserts a `detections` message ever reaches a subscriber — FE-12 can regress silently** | High | Med | codex | **done — claude-verified 2026-09-04** (guard is correct; but it does not execute in CI — see CI-1) | tests/test_parking_live_stream.py (new) |
+| ARCH-9 | design | **Two divergent `video://` resolvers** — `cameras.py` validates with a 6-level parent walk, `stream_manager.py` resolves with BE-7's containment-checked logic | Medium | Low | codex | **done — claude-verified 2026-09-04** (single resolver; error precedence diffed against `55eb61b~1` and unchanged) | app/routers/cameras.py:57, app/services/stream_manager.py:34 |
+| SEC-11 | security | **`scripts/reset_admin.py` hardcodes an `admin`/`admin` reset and prints the password** | Medium | Low | codex | **done — claude-verified 2026-09-04** (no default, exits before `init_db`; credential never entered git history — nothing to rotate) | backend/yolo_classifier/scripts/reset_admin.py |
+| FE-14 | design | Unbriefed camera-dropdown fallback + a doomed WS handshake on the empty initial channel | Low | Low | antigravity | **done — claude-verified 2026-09-04** (both halves; fallback labelling propagates into the SlotMapper modal too) | frontend/src/components/parking/LiveLotView.tsx, frontend/src/lib/websocket.ts |
+| VAL-10r | validation | VAL-10 residual — steps **5 and 7 only**, the two that need a running app | Medium | Med | antigravity | **resolved 2026-09-04 — step 7 SUPERSEDED by VAL-11 (ran in CI 33889258586); step 5 accepted-blocked → reclassified as ACC-1.** Blocked report verified honest. | (observe delivered work) |
 | HYG-1 | — | Dance-mode easter egg + ~10 MB of media assets sit in the parking changeset | Low | Low | claude (user-directed) | **done — decoupled + ignored** | .gitignore, layout.tsx, next.config.js, frontend/package.json |
-| HYG-2 | — | Untracked `video/` holds a watermarked third-party iStock clip — commit it or ignore it? | Low | Low | **user's call** | open | video/ |
+| HYG-2 | — | ~~Untracked `video/` holds a watermarked third-party iStock clip — commit it or ignore it?~~ **Superseded by SEC-12: it was committed and pushed.** | Low | Low | **user's call** | superseded | video/ |
+
+### Round 8 — open (this session) — **final cleanup**
+
+| ID | Lens | Title | Severity | Complexity | assigned_to | status | files |
+|----|------|-------|----------|------------|-------------|--------|-------|
+| SEC-14 | security | **`LoginAttemptLimiter` never evicts** — every distinct username and source IP leaves a permanent entry, growable pre-auth | Low | Low | codex | **done — claude-verified 2026-09-04** (CI run 33894866425; retention correctly outlives lockout so escalation cannot be reset) | app/services/login_attempts.py:50-105 |
+
+**Sequence:** codex takes **SEC-14**, then back to claude — and then, unless the
+user says otherwise, **this board closes.**
+
+> **Why this is the last routed item.** Across eight rounds every Critical and
+> High is fixed *and* defended by tests that actually execute (runs 33889258586,
+> 33892877506, 33893670256). What remains after SEC-14 is two decisions that are
+> yours (**SEC-12**, **HYG-3**) and one check that needs a deployment
+> (**ACC-1**). None of those is an agent task. Continuing to route rounds past
+> that point would be manufacturing work, and this board's whole record is that
+> it finds real defects — I would rather close it cleanly than dilute it.
+
+### Round 7 — open (this session)
+
+| ID | Lens | Title | Severity | Complexity | assigned_to | status | files |
+|----|------|-------|----------|------------|-------------|--------|-------|
+| SEC-13 | security | **`POST /auth/token` had no per-account lockout, no failed-attempt record, and a bcrypt timing oracle** *(severity revised High→Medium: nginx already rate-limited this endpoint per-IP — claude's original framing was overstated, see round-8 block)* | ~~High~~ **Medium** | Med | codex | **done — claude-verified 2026-09-04** via CI run 33893670256; implementation exceeds brief | app/routers/auth.py:23-33 |
+| ARCH-10 | design | `_LazyOpenVINODetector.initialize()` memoises without a lock — two threads racing first access can each construct a detector and load weights twice | Low | Low | codex | **done — claude-verified 2026-09-04** (correct double-checked locking; CI run 33893670256) | app/detection/engine.py:801-816 |
+| ACC-1 | validation | **VAL-10 step 5** — visually confirm a bay flips red on the live overlay as a car parks. Needs a browser in front of a running inference stack | Medium | Low | **deployment-time / user** | deferred | (acceptance check) |
+
+**Sequence:** codex takes **SEC-13 -> ARCH-10**, then back to claude. No frontend
+work this round, so antigravity is idle; **cursor** stays available.
+
+> **Before anything else, codex: FE-14 is still uncommitted.** `git status` shows
+> `frontend/src/components/parking/LiveLotView.tsx` and
+> `frontend/src/lib/websocket.ts` as modified in the working tree, not committed.
+> I verified the code and it is correct, but **CI has never seen it** — and by the
+> rule this board just adopted, that means it is not yet defended. It is also one
+> `git checkout` away from being lost. Commit it on its own, with its own message
+> (`fix(fe-14): ...`), **before** starting SEC-13, so it lands as a separate,
+> traceable change rather than being swept into the security commit. That is a
+> commit, not a re-implementation — do not modify the frontend.
+
+> **Why SEC-13 is High and why it is the only substantive item.** Every other
+> High on this board is now closed and -- as of run 33889258586 -- actually
+> defended by tests that run. This is the one materially exploitable gap the fresh
+> scan turned up. It is a surveillance product: the admin account controls every
+> camera feed and every tenant's data, and `/auth/token` will answer guesses as
+> fast as they arrive, forever. No lockout, no delay, no counter, and nothing in
+> the logs that would show it happening.
+
+> **What I checked and deliberately did NOT raise.** CORS is a localhost
+> allowlist, not `*` (`config.py:157`) -- fine. `deep-sort-realtime` triggers a
+> `torch.load(weights_only=False)` warning in CI, but it is version-pinned, the
+> checkpoint ships inside the package, and no user-controlled path reaches it --
+> a supply-chain note, not a finding, and boarding it would be inflation. The
+> tracker genuinely uses the library (`tracker.py:3`), so it cannot just be
+> dropped. Recorded so the next reviewer does not re-litigate either one.
+
+### Round 6 — open (this session)
+
+| ID | Lens | Title | Severity | Complexity | assigned_to | status | files |
+|----|------|-------|----------|------------|-------------|--------|-------|
+| CI-1 | pipeline | **CI has never passed. `detector = OpenVINODetector()` at import time aborts collection — 0 tests have ever run in CI, including the VAL-11 guard** | High | Med | codex | **done — claude-verified 2026-09-04 from the CI log.** Run 33889258586 success; 122 passed / 1 deselected; `test_parking_live_stream.py .....` all 5 VAL-11 tests executed in CI | app/detection/engine.py:801, .github/workflows/backend-ci.yml |
+| SEC-12 | security | **Watermarked third-party iStock clip (2.75 MB) is committed and pushed to a PUBLIC GitHub repo** — licensing exposure, and removal needs a history rewrite | High | Med | **user's call** | open | video/istockphoto-1370353417-640_adpp_is_slower_8x.mp4, .gitignore:68 |
+| HYG-3 | — | Commit `55eb61b` bundles all of round 4 + all of round 5 + a security fix + a 2.75 MB binary under the message "Add SlotMapper component" | Low | Low | **user's call** | open | (git history) |
+
+**Sequence:** codex takes **CI-1** — it is the only item that changes whether any
+of this board's 40 done rows are actually defended. Then antigravity for
+**FE-14 → VAL-10r**, then back to claude.
+
+> **Why CI-1 outranks the two antigravity items.** FE-14 is Low polish and
+> VAL-10r is a manual observation. CI-1 decides whether **every** automated
+> guard on this board — VAL-8's RT-1 coverage, VAL-9's route extractor, VAL-11's
+> payload contract, all 120 of them — actually runs on push, or merely exists.
+> Right now they merely exist. That is the single highest-leverage fix available
+> and it is one architectural change plus a workflow step.
+
+> **Why CI-1 goes to codex and not to cursor.** It is backend + pipeline, which is
+> codex's lane by the routing table, and it touches `engine.py`, the detection
+> hot path. cursor remains available and unexercised; if codex wants the CI
+> workflow half (`backend-ci.yml`) split off while it does the `engine.py` half,
+> that is a legitimate use of the backup lane — say so in the handoff and I will
+> route it.
 
 **Sequence:** codex takes **VAL-11 → ARCH-9 → SEC-11**, then hands to antigravity
 for **FE-14 → VAL-10r**, then back to claude.
@@ -1623,6 +2014,287 @@ this manual step ever completes.
 
 **Do NOT fix anything.** If either step fails, log it and return control.
 
+## ROUND 6 — acceptance criteria
+
+### CI-1 — CI has never passed; import-time model loading aborts collection  →  codex  (do this first)
+
+**Problem (measured against the actual CI run, not inferred).** Run
+`31885268126` on commit `55eb61b` — the only CI run this repo has ever had —
+failed in 1m16s with:
+
+```
+Interrupted: 6 errors during collection
+ERROR tests/test_frontend_api_routes.py      - FileNotFoundError: OpenVINO model not found
+ERROR tests/test_inference.py                - FileNotFoundError: OpenVINO model not found
+ERROR tests/test_parking_anomaly.py          - FileNotFoundError: OpenVINO model not found
+ERROR tests/test_parking_live_stream.py      - FileNotFoundError: OpenVINO model not found
+ERROR tests/test_parking_occupancy.py        - FileNotFoundError: OpenVINO model not found
+ERROR tests/test_val10_runtime_verification.py - FileNotFoundError: OpenVINO model not found
+```
+
+pytest aborts the whole session on collection errors, so **zero tests have ever
+executed in CI.** Every "N/N passed" on this board is a local number from an
+implementer's own machine.
+
+**Root cause, one line.** `app/detection/engine.py:801`:
+
+```python
+detector = OpenVINODetector()      # module scope — __init__ calls _load_model()
+```
+
+`_load_model()` raises `FileNotFoundError` when the weights are absent
+(`engine.py:263-266`). `models/` is gitignored (`.gitignore:73`) and
+`backend-ci.yml` has no conversion, download or cache step. So any import
+reaching `app.detection` needs weights CI structurally cannot have. The
+`mock_inference_pool` fixture cannot rescue it — the failure is at **import**,
+before fixtures run.
+
+**Do:**
+- Make the module-level `detector` **lazy** so importing `app.detection` never
+  loads weights. A module-level `__getattr__` returning a memoised singleton, or
+  a small proxy that constructs on first attribute access, both work — pick one
+  and keep the existing `from app.detection import detector` call sites working
+  unchanged. Do **not** make every call site handle a `None`.
+- Keep the eager failure where it belongs: startup should still fail loudly with
+  the same `FileNotFoundError` message when weights are genuinely missing. Move
+  that check into the app's startup path, not module import.
+- Add a test asserting `import app.detection` succeeds with the model path
+  pointing at a nonexistent file — that is the regression guard for this exact
+  defect, and it is the one thing that would have caught it.
+- Then make CI actually green: `python -m pytest` must collect and run the full
+  suite on a clean runner with no weights present. Do not paper over it with
+  `--ignore`, `-p no:cacheprovider`, `continue-on-error`, or by deleting the six
+  files from collection. If some individual test genuinely requires real weights,
+  mark that test with `@pytest.mark.requires_model` and deselect **that test**,
+  not its module — and say in your handoff exactly which tests you deselected and
+  why.
+
+**Done when:** you can point me at a **green CI run URL** on a pushed commit, and
+`gh run list` shows `success`. State the run id and the collected/passed counts
+from the CI log — not from your machine. If the suite goes green locally but red
+in CI, CI is the answer that counts.
+
+**Note on scope.** This touches `engine.py`, the detection hot path. Change
+*when* the detector is constructed and nothing else — no inference behaviour, no
+model config, no threading changes. BE-11's rule still holds: nobody alters the
+intrusion detection path.
+
+### SEC-12 — A watermarked third-party clip is committed to a public repo  →  the user decides
+
+**This is not the same question HYG-2 asked, so I am not carrying HYG-2 forward.**
+HYG-2 asked "commit it or ignore it?" and was left open for you. It has since
+been **committed and pushed**, and the facts changed underneath the question:
+
+- The file is `video/istockphoto-1370353417-640_adpp_is_slower_8x.mp4`, **2,753,686
+  bytes**, added in `55eb61b` and present at `HEAD`.
+- `git check-ignore` says it is **not ignored**. `.gitignore:68` covers
+  `backend/yolo_classifier/video/` — the *other* video directory. The repo-root
+  `video/` was never covered.
+- `gh repo view` reports the repository is **PUBLIC**, and `main` is level with
+  `origin/main` — so it is published, not just local.
+- The filename itself carries the provenance: an iStock stock id, and the round-4
+  notes record a visible watermark in the centre drive lane.
+
+**Why this is yours and not an agent's.** Deleting the file from `HEAD` does not
+remove it from history — it stays fetchable at `55eb61b` forever unless the
+history is rewritten (`git filter-repo` / BFG, then a force-push), which is
+destructive, breaks every existing clone, and is not a call any agent should make
+unilaterally on your public repo. There is also a licensing judgement here that
+is genuinely yours: whether an iStock preview clip may sit in a public repo
+depends on the licence you hold.
+
+**The options, stated plainly:**
+1. **Leave it.** Fastest. The exposure stands.
+2. **Remove from `HEAD` + add `/video/` to `.gitignore`.** Stops it spreading,
+   removes it from fresh checkouts; history still contains it.
+3. **Rewrite history to purge the blob, then force-push.** Actually removes it.
+   Destructive; coordinate before doing it.
+4. **Replace with a self-shot or CC0 clip** and repoint the fixtures. Removes the
+   licensing question permanently; costs a re-record and possibly re-tuning the
+   occupancy thresholds against new footage.
+
+**Tell me which and I will route it.** If you pick 3 or 4 I will write the brief;
+I will not hand a history rewrite to an implementer without your explicit
+go-ahead. Note the fixtures at `tests/fixtures/parking/frame_*.png` are frames
+from this same clip and inherit whatever you decide.
+
+### HYG-3 — One commit carries four rounds of unrelated work  →  the user decides
+
+`55eb61b` is titled **"feat: Add SlotMapper component for parking slot mapping and
+management"**. It actually contains: the SlotMapper *and* LiveLotView *and* the
+ParkingTower3D deletion (500 lines) *and* the whole occupancy engine *and* the
+anomaly service *and* an Alembic migration *and* the SEC-11 credential fix *and*
+the ARCH-9 refactor *and* eight new test files *and* a 2.75 MB video *and* 1,372
+lines of this handover file — 39 files.
+
+**Impact is traceability, not correctness.** Nothing is broken by it. But
+`git log` no longer answers "when did the credential fix land?" or "what shipped
+with the occupancy engine?", and a revert of that commit would take out four
+rounds of work at once. It is also why SEC-12 slipped in unnoticed: a 2.75 MB
+binary is invisible in a 39-file diff titled after a React component.
+
+**No action is being routed.** Going forward it is worth one commit per board
+item, or at least per round, with the item ids in the message
+(`fix(sec-11): require ARGUS_ADMIN_PASSWORD`). Say if you want that written into
+the protocol block as a rule for implementers and I will add it.
+
+## ROUND 7 — acceptance criteria
+
+### SEC-13 — Unlimited password guessing against the admin account  ->  codex  (do this first)
+
+**Problem.** `app/routers/auth.py:23-33` looks up the user, calls
+`verify_password`, and raises a generic 401 on failure. There is no rate limit,
+no lockout, no backoff, and no record that a failure ever happened. I grepped the
+whole `app/` tree for `slowapi`, a limiter dependency, or any per-route throttle:
+the only hits are unrelated *concurrency* limiters inside `crime_classifier.py`
+and `roboflow_classifier.py`. An attacker can pipeline guesses at `/auth/token`
+indefinitely, and the only account name they need is `admin` -- which
+`reset_admin.py` documents as the one that exists.
+
+**A second, smaller issue in the same three lines.** When the username does not
+exist, `verify_password` is never called, so the request returns without doing
+bcrypt work; when it does exist, it pays the full hash cost. That timing
+difference is measurable and turns the endpoint into a **username oracle**. The
+generic error message was clearly written to avoid exactly that leak -- the
+timing undoes it.
+
+**Do:**
+- Rate-limit `POST /auth/token` per-IP **and** per-username. Per-IP alone is
+  defeated by a botnet; per-username alone lets one IP spray many accounts.
+  `slowapi` is the conventional FastAPI choice; a Redis-backed counter is also
+  fine. **Pick one and justify it in your handoff** -- if the deployment is
+  multi-worker, an in-process counter is close to useless and you should say so
+  rather than ship it.
+- Add progressive lockout or backoff after a threshold of consecutive failures
+  for a username. A legitimate user must be able to recover -- use a time-boxed
+  window, not a permanent flag, or you have built a denial-of-service against
+  your own operators.
+- Close the timing oracle: always perform a verification, comparing against a
+  dummy hash when the user does not exist, so both branches cost the same. Do
+  **not** change the response body or status -- the generic message is correct
+  and is why this only leaks through timing today.
+- **Log failed attempts** with username and source IP at WARNING. A brute-force
+  attempt against this system is currently invisible after the fact, which for a
+  surveillance product is its own finding.
+- Do not weaken what works: `verify_password`, the token claims
+  (`sub`/`role`/`tenant_id`), and `ACCESS_TOKEN_EXPIRE_MINUTES` all stay as-is.
+
+**Done when:** a test proves the Nth consecutive failure for one username is
+refused while a *different* username is unaffected; a test proves a correct
+password still authenticates after the window expires; a test proves the
+unknown-user and known-user paths both perform verification; and **you cite the
+green CI run id** showing them pass. Local counts alone are no longer an accepted
+answer on this board.
+
+**Watch out for:** the existing suite authenticates constantly. A limiter that
+does not reset between tests will turn the suite red in confusing ways -- make
+the limit injectable or resettable via a fixture, rather than loosening it to a
+number so high it never triggers in production either.
+
+### ARCH-10 — The lazy detector memoises without a lock  ->  codex  (small; do it with SEC-13)
+
+**Problem.** `engine.py:801-816` does check-then-set with no lock: two threads
+arriving first can both see `self._instance is None` and each construct an
+`OpenVINODetector()`, loading model weights twice, spiking memory, with one
+instance silently discarded. The old import-time singleton could not do this,
+because Python's import lock serialised it.
+
+**In practice this is Low, and I want to be explicit about why:** `main.py`'s
+lifespan calls `detector.initialize()` at startup before the inference pool
+starts, so the real server memoises it before any worker thread can race. The
+exposure is the paths that skip lifespan -- `app/cli/roi_monitor.py:241` imports
+`detector` directly -- plus any future caller. A latent sharp edge introduced by
+an otherwise good fix, not a live bug.
+
+**Do:** guard construction with a `threading.Lock` using double-checked locking
+(check, acquire, re-check, construct). Keep `__getattr__` and the public surface
+exactly as they are -- no call site should change. Do not make it async; this is
+sync construction called from both sync and async contexts.
+
+**Done when:** `initialize()` is safe under concurrent first access, the five
+`detector` import sites are untouched, `test_detection_lifecycle.py` still
+passes, and CI is green -- cite the run id.
+
+### ACC-1 — VAL-10 step 5, deferred to deployment  ->  nobody, until someone has a running stack
+
+**This is not assigned and no agent should pick it up.** It is recorded so it is
+not silently forgotten.
+
+**What it is:** with the sample clip streaming on a parking-role camera, open
+`/parking` and confirm the canvas overlay visibly flips a bay red as a car parks
+-- one specific transition, with a rough timestamp.
+
+**Why it is deferred rather than routed.** It needs a browser in front of a live
+inference stack. antigravity does not have one (verified independently: no venv,
+18 missing dependencies, no weights). Neither do I. It has been attempted and
+missed four times, and a fifth attempt would fail for the identical reason.
+Routing it again would be ritual, not control.
+
+**What already covers the substance:** the payload contract behind that overlay
+is guarded by VAL-11 and runs on every push (run 33889258586); occupancy scoring
+over the real clip is covered by `test_val10_runtime_verification.py`; and step
+7's crime-gating question is fully covered by
+`test_parking_crime_wiring_requires_role_and_person_track`. What remains is
+strictly *"did the pixels render"*, which no unit test can answer.
+
+**Done when:** whoever next deploys the stack looks at `/parking` and writes one
+line here about what they saw. If it turns out wrong, that is a new FE finding
+with a real observation behind it -- worth far more than four more rounds of
+asking.
+
+## ROUND 8 — acceptance criteria
+
+### SEC-14 — The login limiter never releases state  ->  codex  (last item)
+
+**Problem.** `app/services/login_attempts.py`. Two structures grow and never
+shrink:
+
+- `self._username_states.setdefault(username_key, _UsernameState())` creates an
+  entry for **every username ever attempted**. It is removed only on a
+  *successful* login (`_username_states.pop` in the `credentials_valid` branch).
+  A username that fails and is never used again keeps its entry forever — even
+  after `_prune` empties its `failures` deque and its lockout expires.
+- `self._ip_failures[source_ip]` is a `defaultdict(deque)`. `_prune` drops stale
+  timestamps but the now-empty deque, and its dict key, stay permanently.
+
+`reset()` clears both, but that exists for tests and is never called in
+production. So both dicts are monotonically increasing, and both are reachable by
+an **unauthenticated** attacker who simply varies the username or the source
+address.
+
+**Why this is Low rather than High, stated plainly so nobody re-escalates it:**
+nginx caps `/api/v1/auth/token` at `10r/m` per IP with `burst=5`, so an attacker
+adds entries at a bounded, slow rate rather than explosively — and the backend
+binds to `127.0.0.1`, so that cap cannot be bypassed. This is a slow leak under
+sustained hostile traffic, not a quick kill. It is still worth closing because it
+sits *inside* the component whose entire job is absorbing hostile traffic.
+
+**Do:**
+- Evict entries once they carry no live state. During `_prune`/`evaluate`, drop a
+  `_username_states` entry whose `failures` is empty **and** whose `locked_until`
+  is in the past, and drop an `_ip_failures` key whose deque is empty. Be careful:
+  `lockout_level` is the progressive-backoff memory, so evicting a *locked* or
+  recently-locked username resets an attacker's escalation — only evict once the
+  lockout has genuinely expired, and say in your handoff what window you chose.
+- Add a bound as a backstop — a maximum tracked-entry count with oldest-first
+  eviction, or a periodic sweep keyed off `evaluate()` calls (no background task;
+  a counter or a "last swept" timestamp is enough and keeps it dependency-free).
+  Pick one, and say which and why.
+- Do **not** change the observable behaviour of the limiter: the thresholds, the
+  exponential backoff and its 15-minute cap, the atomicity under `self._lock`,
+  the `LoginDecision` shape, and `reset()` all stay exactly as they are.
+
+**Done when:** a test drives many distinct usernames and source IPs through
+`evaluate()` and asserts the tracked-entry counts stay bounded; a test proves a
+username still *inside* its lockout window is **not** evicted and its
+`lockout_level` survives, so escalation cannot be reset by waiting a moment; the
+existing `test_login_protection.py` cases all still pass unchanged; and **you
+cite the green CI run id**.
+
+**Then hand back to claude and expect the board to close.** There is no round 9
+planned. If you see something else while you are in this file, do not fix it —
+log it in your handoff and let it be routed.
+
 ### HYG-1 — RESOLVED 2026-08-15 (user-directed, executed by claude)
 
 The user's call: **keep dance mode working locally, keep it out of the repo.**
@@ -1785,23 +2457,43 @@ mapped bays are never overwritten by the fictional G/F1/F2 tower layout.
 
 | 2026-08-15 | codex | claude | **VAL-11, ARCH-9, and SEC-11 complete — backend hardening returned for review.** VAL-11 adds five cases in `test_parking_live_stream.py`: a real committed frame with mapped geometry reaches the camera-id broadcast with `frame_image` and `parking_slots`; the `parking` transition contract keeps `event`/`camera_id`/`slots`; and crime wiring requires both a parking-role camera and a person track. I deliberately changed the target to `parking`, dropped `frame_image`, renamed `parking_slots`, and renamed transition `slots`; each focused test turned red, and every production line was restored. ARCH-9 removes the router's independent tree walk and delegates validation to BE-7's `_resolve_stream_source`, with resolvable/missing agreement tests and preserved separator/extension 422 messages. SEC-11 requires `ARGUS_ADMIN_PASSWORD` with no default, checks it before `init_db`, hashes it, never prints it, and exits 1 when absent. Verification: **120 collected / 120 passed / 0 failed**, focused **20/20**, modified Python files compile, `git diff --check` passes, and the no-password script run exits non-zero before DB initialization. Recommend Claude review, then route FE-14 and VAL-10r as already planned. |
 
+| 2026-09-04 | claude | claude | **Roster change, not a review pass.** Added **cursor** to the roster as the BACKUP member / on-demand implementer: the user has Cursor Pro and installed a matching `multi-agent` skill at `~/.cursor/skills/multi-agent/`, so cursor now joins by reading this file — no wrapper, no `.cursorrules` (one was written and then removed as a duplicate of the skill). Front matter now carries `cursor_status`, a cursor agent row, the on-demand exception in protocol rule 2, and `backup_ondemand: cursor` in routing — cursor is the spillover target that grok's absence left empty. **No findings were added, removed or re-routed.** codex's round-5 items (VAL-11, ARCH-9, SEC-11) are still marked done-but-unverified; the claude verification pass is still owed. Board otherwise unchanged: FE-14 + VAL-10r remain antigravity's.
+
+| 2026-09-04 | claude | codex | **Round-5 verification pass — the one that was owed — plus round 6.** All three of codex's items verified against their own criteria: **ARCH-9 PASS** (one resolver; I diffed `55eb61b~1` and confirmed error precedence is genuinely unchanged, so the consolidation was contract-safe), **SEC-11 PASS** (no default, exits before `init_db`, and `git log -p --all` confirms the hardcoded credential **never entered history** — nothing to rotate), **VAL-11 PASS on authorship** (I traced all four payload mutations plus both halves of the step-7 parametrisation against `stream_manager.py:353-373`; the assertions are load-bearing and the exact-set comparison catches renames both ways). **Then I checked what nobody had: `gh run list`. CI has never been green.** The single run (`31885268126`, on `55eb61b`) aborted with **6 collection errors** — including `test_parking_live_stream.py`, the VAL-11 guard itself — because `app/detection/engine.py:801` builds `OpenVINODetector()` at **import** time and CI has no weights (`models/` is gitignored; the workflow has no provisioning step). pytest aborts on collection errors, so **zero tests have ever executed in CI**; every "N/N passed" on this board is a local number. That is **CI-1 (High) → codex**, and it is the highest-leverage item available because it decides whether all 40 done rows are defended or merely written down. I could not reproduce codex's 120/120 myself — this machine is missing **18 of 33** deps and the present versions are not the pinned ones — so I have labelled my VAL-11 verification as a **static trace, not an execution**, and I am retiring the "reproduced locally" claims in my own earlier entries: from CI-1 onward, green means green in CI. Also raised: **SEC-12 (High, user's call)** — the watermarked iStock clip is committed **and pushed to a PUBLIC repo** (`gh repo view` → PUBLIC; `.gitignore:68` only covers the *other* video dir), which supersedes HYG-2 because the question changed from "commit it?" to "it is published, now what?"; four options are written up and I will not route a history rewrite without an explicit go-ahead. **HYG-3 (Low, user's call)** — `55eb61b` bundles four rounds, a security fix and a 2.75 MB binary under a "SlotMapper" title, which is why SEC-12 slipped through unseen. FE-14 + VAL-10r stay antigravity's, after CI-1. |
+
+| 2026-09-04 | codex | antigravity | **CI-1 complete — the backend workflow is green for the first time.** Commit `1e9bea0` replaces import-time `OpenVINODetector()` construction with a memoised lazy proxy while explicitly initializing it in FastAPI lifespan startup, so missing weights still raise the same `FileNotFoundError` before database initialization. Added clean-interpreter regressions proving `import app.detection` succeeds without weights and application startup fails loudly without them. Converted `test_inference.py` into the only `requires_model` test and deselected exactly that test in CI; no modules are ignored and no continue-on-error is used. GitHub Actions run **33889258586** succeeded: **123 collected, 122 passed, 1 deselected**, including both new lifecycle tests and all five VAL-11 tests; Alembic upgrade/downgrade also passed. Handing control to antigravity for FE-14 → VAL-10r. |
+| 2026-09-04 | antigravity | claude | **FE-14 done. VAL-10r reported blocked (local runtime absent). Handing control back to claude.** **FE-14:** (1) Added `if (!channel) return;` at the start of `connect` in `frontend/src/lib/websocket.ts` to prevent the doomed `/ws/?token=...` connection attempt on initial render when `selectedCameraId` is `""`. (2) In `frontend/src/components/parking/LiveLotView.tsx`, made fallback cameras visually explicit: added an amber fallback status badge (`Fallback: Non-parking`), wrapped options in `<optgroup label="Non-Parking Cameras (Fallback)">`, styled select border in amber when in fallback mode, labelled option entries with fallback role/location instead of presenting them as "Parking Feed", and propagated fallback indication to `SlotMapper` modal `cameraName`. Verification: `npx tsc --noEmit` exits 0 cleanly. **VAL-10r (Steps 5 and 7):** Blocked due to local environment constraints. The current host environment has no `.venv`, Python 3.12 is missing required dependencies (including `sqlalchemy` and `openvino`), and OpenVINO model weights (`*.xml`) are not present in the workspace. The backend streaming server and real-time model inference pipeline cannot be started locally to capture browser visual transitions (Step 5) or force crime alerts on live video (Step 7). Reporting blocked per protocol rather than stating unverified observations. Handing switch to claude. |
+
+| 2026-09-04 | claude | codex | **Round-6 verification pass + round-7 scan.** **CI-1 PASS — verified from the CI log, not the handoff note.** `gh run list` shows run **33889258586 success**, the first green CI in this repo's history, and inside it: `collected 123 items / 1 deselected / 122 selected`, `122 passed` in 24.59s, Alembic up/down green — and critically `test_parking_live_stream.py .....`, meaning **all five VAL-11 tests executed on a clean Ubuntu runner with no model weights**, with the three crime-wiring parametrisations named in the log. The implementation is right: `_LazyOpenVINODetector` memoises behind `__getattr__` (I grepped for `isinstance(..., OpenVINODetector)` — none, which is the one thing this pattern usually breaks), lifespan calls `initialize()` **before** `init_db()` so a missing model still fails loudly and early, and CI deselects by marker — exactly one test, marker registered in `pyproject.toml`, no ignored modules, no `continue-on-error`. `test_detection_lifecycle.py` earns specific credit for using a **clean subprocess** with `OPENVINO_MODEL_PATH` aimed at a missing file; an in-process test would have passed for the wrong reason. `1e9bea0` is also 6 files under `fix(ci): ...` — the commit hygiene HYG-3 asked for, unprompted. **FE-14 PASS**, both halves, with the fallback labelling correctly propagated into the SlotMapper modal title. **VAL-10r — blocked, honest, and now CLOSED rather than asked a fifth time.** The blocked report matches what I found independently last round (18/33 deps missing, no weights), so it is credited without argument as promised. **Step 7 is superseded**: `test_parking_crime_wiring_requires_role_and_person_track` already asserts precisely what step 7 asked, and it ran in CI — re-running it by hand would tell us less. **Step 5 is reclassified to ACC-1**, a deployment-time acceptance check assigned to nobody; it needs a browser over a live stack that no agent here has, and a fifth routing would fail for the same reason as the first four. **New this round: SEC-13 (High) → codex** — `/auth/token` has no rate limit, no lockout and no failed-attempt logging, so the account that owns every camera and every tenant can be guessed at indefinitely; the same three lines also leak a username oracle through bcrypt timing, since `verify_password` is skipped for unknown users. **ARCH-10 (Low) → codex** — CI-1's lazy proxy memoises without a lock; mitigated in practice by the lifespan pre-warm, but `roi_monitor.py` skips lifespan. Checked and deliberately not boarded: CORS is a localhost allowlist, and the `deep-sort-realtime` `torch.load(weights_only=False)` warning is a pinned-dependency supply-chain note with no user-controlled path. SEC-12 and HYG-3 still await the user. |
+
+| 2026-09-04 | codex | claude | **SEC-13 and ARCH-10 complete; FE-14 also preserved in its own commit as instructed.** FE-14 was committed unchanged as `38b5918` and passed CI run **33892877506**. SEC-13 adds an atomic, resettable failed-login guard: five failures within 15 minutes trigger a 60-second username lockout, repeated lockouts double to a 15-minute cap, and 20 failures per IP per minute stop account spraying. Every attempt still performs exactly one bcrypt verification using the real hash or a dummy hash, the existing generic 401 status/body and token claims remain unchanged, and every refusal logs bounded username/source-IP values at WARNING without the password. The source-IP helper trusts `X-Real-IP` only from the current loopback/private Nginx boundary, which overwrites that header. I chose an in-process guard because the shipped Docker command runs exactly one Uvicorn worker and Nginx already provides an outer per-IP request limit; **before adding workers or replicas, move this state to Redis or another shared store**. ARCH-10 wraps detector construction in a double-checked `threading.Lock`; all existing detector import sites remain unchanged. Commit `00ae8b4` passed GitHub Actions run **33893670256**: **130 collected, 129 passed, 1 existing real-model test deselected**; `test_login_protection.py ......` and `test_detection_lifecycle.py ...` executed, and Alembic upgrade/downgrade passed. Local pytest could not start because this machine lacks SQLAlchemy; syntax compilation and `git diff --check` passed locally. |
+
+| 2026-09-04 | claude | codex | **Round-7 verification pass — both items PASS, and a correction to my own finding.** **SEC-13 PASS**, verified against CI run **33893670256 (success, 130 collected / 129 passed)**. Every requirement met: per-IP *and* per-username limiting, exponential lockout capped at 15 min (time-boxed, so operators recover), the timing oracle closed with `DUMMY_PASSWORD_HASH` so both branches pay equal bcrypt cost, WARNING logs carrying username + source IP + reason, the generic 401 untouched, and `reset()` for test isolation — all under one `Lock` as an atomic read-modify-write. **Two things it did unasked and got right:** `_source_ip()` trusts `X-Real-IP` only when the direct peer is loopback/private (otherwise a public attacker forges a fresh bucket per request and the per-IP control is worthless) — and that matches nginx, which sets `X-Real-IP $remote_addr`; and it *documented* the single-worker assumption rather than hiding it. **I verified that assumption rather than accepting it:** `Dockerfile:45` runs uvicorn with no `--workers` and compose adds no override, so it holds today. **ARCH-10 PASS** — textbook double-checked locking, public surface unchanged. **CORRECTION — I overstated SEC-13.** I claimed `/auth/token` would "answer guesses as fast as they arrive, forever." Wrong: `nginx/nginx.conf:8` has carried `limit_req_zone ... rate=10r/m` on `location = /api/v1/auth/token` (`burst=5`, `limit_req_status 429`) all along, and the backend binds to `127.0.0.1:8000`, so it was never bypassable. I grepped `app/` for a limiter, found none, and drew a conclusion about the *system* from a search of one *directory* — the exact failure mode I have been holding other agents to, and worse from the reviewer because nobody re-checks me. The finding stayed valid (nginx is per-IP only, so a distributed spray at one account was unbounded; there was no lockout; there was no logging; the timing oracle was real and rate-limit-independent), so the fix was worth doing — but severity is revised **High → Medium** on the board with the reason attached, not quietly edited. **New: SEC-14 (Low) → codex**, the last routed item: `LoginAttemptLimiter` never evicts — `_username_states` entries are dropped only on successful login and `_ip_failures` deques are pruned of timestamps but never removed, so both dicts grow monotonically under pre-auth traffic. Low, not High, because nginx bounds the rate of new entries. **After SEC-14 this board should close:** every Critical and High across eight rounds is fixed and CI-defended, and what remains is two user decisions (SEC-12, HYG-3) and one deployment check (ACC-1) — none of them agent work. |
+
+| 2026-09-04 | codex | claude | **SEC-14 complete — final routed item returned for board closure.** Commit `8f8688d` replaces permanently retained limiter keys with dependency-free cleanup under the existing lock: the currently accessed key is pruned directly, and every 128 `evaluate()` calls a full sweep removes expired username and IP state. IP entries become eligible after their 60-second window. Username escalation memory is retained for the full 15-minute failure window after the last accepted failure and never less than `locked_until`, so a brief wait or an active lockout cannot reset exponential backoff; it is removed on the next direct access or periodic sweep only after that retention window genuinely expires. Existing thresholds, the 15-minute cap, `LoginDecision`, atomicity and `reset()` remain unchanged. Two regressions drive 100 distinct username/IP pairs and prove tracked counts remain bounded, then prove a recently expired first lockout survives sweeps and escalates to level 2 before eventual eviction. GitHub Actions run **33894866425** succeeded: **132 collected, 131 passed, 1 existing real-model test deselected**; `test_login_protection.py ........` shows all eight cases executed, and Alembic upgrade/downgrade passed. Local pytest could not start because SQLAlchemy is absent; `py_compile` and `git diff --check` passed locally. |
+
+| 2026-09-04 | claude | — (board closed) | **Closing pass. SEC-14 verified PASS — the board is closed.** CI run **33894866425 (success)**: `132 collected, 131 passed, 1 deselected`. The fix goes past what was asked: `defaultdict`/`setdefault` are gone in favour of `get()` with construction moved into the failure branch, so a *successful* login now allocates nothing; touched entries are evicted inline; and `_sweep_expired()` runs every 128 evaluations — a counter-driven sweep, no background task. **The trap I flagged is the part handled best:** `_username_state_expired()` uses `max(locked_until, last_failure_at + username_window_seconds)`, so state outlives the lockout by a full 15-minute window and an attacker cannot reset their own `lockout_level` escalation by pausing briefly. It is verified rather than merely implemented — `test_recent_lockout_survives_sweeps_and_preserves_escalation_level` asserts the retained level is 1 after a sweep, escalates to 2, and only then evicts. **BOARD CLOSED: 8 rounds, 45 items done, every Critical and High fixed and — since run 33889258586 — genuinely defended by tests that execute.** The most valuable thing this board found was that CI had never once gone green and the suite had never run; four rounds of "N/N passed" were local numbers, two of them mine. **No implementer has anything assigned.** Remaining and explicitly not agent work: **SEC-12** (watermarked clip in a PUBLIC repo — licensing call plus a possible history rewrite, the user's decision), **HYG-3** (largely self-corrected — `1e9bea0`, `38b5918`, `00ae8b4`, `8f8688d` are each one item, one conventional message, one green run), and **ACC-1** (one visual check awaiting a deployment). Reopen only on a user decision or new work. |
+
 <!--
- IMPLEMENTERS (ROUND 5): codex holds the switch. Take VAL-11 → ARCH-9 → SEC-11.
- VAL-11 is the priority: 109 tests pass and NONE of them assert that a
- `detections` message ever reaches a subscriber, so the FE-12 defect class has
- no guard. Write the guard next to the code it guards. Do NOT change production
- code for VAL-11 — if a test needs a production change, stop and say so.
- SEC-11 is a credential in a script about to be committed; treat it as blocking
- for the commit, not for the board.
- Then antigravity: FE-14, then VAL-10r (steps 5 and 7 ONLY — everything else in
- VAL-10 is closed and credited; do not redo it). For VAL-10r, "blocked, and here
- is why" is an accepted answer. An unrun step reported as done is not — that has
- now happened three times and is why VAL-11 exists.
- HYG-1 is nobody's task: it is flagged for the user's decision. Do not act on it.
- The partial-block rule still stands: one ambiguous row blocks that row, not the
- batch.
+ BOARD CLOSED — 2026-09-04. THERE IS NO ROUND 9.
+ The switch reads `claude` so that NO implementer picks anything up. codex,
+ antigravity and cursor: you have nothing assigned. If you are pointed at this
+ file, the correct action is to STOP and say the board is closed.
+ Final state: 8 rounds, 45 items done, 0 routed items open. Every Critical and
+ High is fixed AND defended by tests that actually execute in CI
+ (33889258586, 33892877506, 33893670256, 33894866425).
+ The three remaining items are NOT agent work and must not be self-assigned:
+   SEC-12 — watermarked iStock clip committed to a PUBLIC repo. The user's
+            decision. May require a history rewrite + force-push; NO agent
+            touches that without an explicit go-ahead.
+   HYG-3  — commit hygiene. Largely self-corrected going forward.
+   ACC-1  — one visual confirmation that a bay flips red on the live overlay.
+            Assigned to NOBODY; waits for a real deployment.
+ If this board is reopened, keep one rule above all others:
+   GREEN MEANS GREEN IN CI. Cite a run id. "Passed locally" cost this project
+   four rounds of false confidence -- including two of claude's own claims --
+   and was settled permanently by a single CI run id.
  Only claude edits the plan. grok remains UNAVAILABLE.
- NOBODY changes the intrusion detection path except as BE-11 specifies.
 -->
 
 <!--

@@ -34,33 +34,66 @@ class IntentResult:
 
 
 def classify_intent(features: TrajectoryFeatures) -> IntentResult:
-    """Classify a completed trajectory into a behavioral intent."""
+    """Classify a completed trajectory into a behavioral intent.
+
+    Behaviour is classified first (loitering, casing, delivery, ...). A zone
+    violation (``had_intrusion``) is then layered on top: a person who merely
+    *passed through* an armed zone keeps their behavioural intent — walking
+    across a driveway is not the same as lingering inside a restricted area —
+    while lingering/casing/unknown behaviour inside a zone is escalated to
+    ``intrusion``.
+    """
+    behaviour = _classify_behaviour(features)
+    if not features.had_intrusion:
+        return behaviour
+
+    zones = features.roi_zones_visited
+    if behaviour.intent_type == "passing_through" and behaviour.confidence >= 0.6:
+        return IntentResult(
+            intent_type="passing_through",
+            confidence=round(min(behaviour.confidence, 0.80), 2),
+            reasoning=(
+                f"Crossed armed zone(s) {zones} but kept moving "
+                f"({features.avg_speed:.1f} px/s, {features.direction_changes} direction changes). "
+                + behaviour.reasoning
+            ),
+            features=behaviour.features,
+        )
+    if behaviour.intent_type in ("delivery", "patrol"):
+        return IntentResult(
+            intent_type=behaviour.intent_type,
+            confidence=round(behaviour.confidence * 0.9, 2),
+            reasoning=f"Entered armed zone(s) {zones} with {behaviour.intent_type} pattern. " + behaviour.reasoning,
+            features=behaviour.features,
+        )
+
+    conf = 0.85
+    if behaviour.intent_type in ("loitering", "surveillance"):
+        conf = 0.95
+    elif features.duration_sec > 10:
+        conf = 0.90
+    return IntentResult(
+        intent_type="intrusion",
+        confidence=conf,
+        reasoning=(
+            f"Dwelled inside armed zone(s) {zones} for {features.duration_sec:.1f}s "
+            f"with {behaviour.intent_type} behaviour. " + behaviour.reasoning
+        ),
+        features=behaviour.features,
+    )
+
+
+def _classify_behaviour(features: TrajectoryFeatures) -> IntentResult:
     f = features.to_feature_dict()
     duration = features.duration_sec
     avg_speed = features.avg_speed
-    max_speed = features.max_speed
     direction_changes = features.direction_changes
     stationary_ratio = features.stationary_ratio
     bbox_coverage = features.bbox_coverage
-    had_intrusion = features.had_intrusion
-    roi_zone_count = len(features.roi_zones_visited)
     point_count = features.point_count
 
     # Normalize direction changes by duration for rate
     dir_change_rate = direction_changes / duration if duration > 0 else 0
-
-    # ── Rule 1: Intrusion (highest priority) ─────────────────────────────
-    if had_intrusion:
-        conf = 0.90
-        if duration > 10:
-            conf = 0.95
-        return IntentResult(
-            intent_type="intrusion",
-            confidence=conf,
-            reasoning=f"Object entered restricted ROI zone(s) {features.roi_zones_visited}. "
-                      f"Duration in scene: {duration:.1f}s.",
-            features=f,
-        )
 
     # ── Rule 2: Loitering ────────────────────────────────────────────────
     # High stationary ratio + long duration + small area coverage

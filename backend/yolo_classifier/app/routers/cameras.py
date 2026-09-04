@@ -14,7 +14,7 @@ from app.models import (
 )
 from app.schemas import CameraCreate, CameraUpdate, CameraResponse
 from app.services.auth import get_current_active_user
-from app.services.stream_manager import _resolve_stream_source
+from app.services.stream_manager import _resolve_stream_source, stream_manager
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -176,6 +176,11 @@ async def update_camera(
 
     await db.flush()
     await db.refresh(camera)
+
+    if "calibration" in update_data:
+        stream_manager.update_camera_calibration(camera_id, camera.calibration)
+    if "role" in update_data or "gate_roi" in update_data:
+        stream_manager.update_camera_gate(camera_id, camera.role, camera.gate_roi)
     return camera
 
 

@@ -35,6 +35,49 @@ export function severityColor(severity: string): string {
   }
 }
 
+/** Hex colour for a risk level (used for SVG overlays). */
+export function riskHex(level?: string): string {
+  switch (level) {
+    case "critical":   return "#f87171";
+    case "alert":      return "#fb923c";
+    case "suspicious": return "#facc15";
+    case "observe":    return "#4ade80";
+    default:           return "#89b4fa";
+  }
+}
+
+/** Tailwind classes for a risk-level badge. */
+export function riskBadge(level?: string): string {
+  switch (level) {
+    case "critical":   return "bg-red-500/15 text-red-300 border-red-500/30";
+    case "alert":      return "bg-orange-500/15 text-orange-300 border-orange-500/30";
+    case "suspicious": return "bg-yellow-500/15 text-yellow-300 border-yellow-500/30";
+    case "observe":    return "bg-emerald-500/10 text-emerald-300 border-emerald-500/20";
+    default:           return "bg-slate-700/50 text-slate-400 border-slate-600/50";
+  }
+}
+
+/** Hex colour for a zone type. */
+export function zoneTypeHex(type?: string): string {
+  switch (type) {
+    case "restricted": return "#f87171";
+    case "perimeter":  return "#fb923c";
+    case "entrance":   return "#4ade80";
+    case "driveway":   return "#60a5fa";
+    case "parking":    return "#c084fc";
+    case "public":     return "#94a3b8";
+    default:           return "#22d3ee";
+  }
+}
+
+export function armModeBadge(mode?: string): string {
+  switch (mode) {
+    case "armed":    return "bg-red-500/15 text-red-300 border-red-500/30";
+    case "disarmed": return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+    default:         return "bg-blue-500/15 text-blue-300 border-blue-500/30";
+  }
+}
+
 export function latencyColor(ms: number): string {
   if (ms < 30)  return "text-emerald-400 bg-emerald-500/10";
   if (ms < 80)  return "text-blue-400 bg-blue-500/10";

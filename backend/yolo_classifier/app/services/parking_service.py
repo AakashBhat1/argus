@@ -237,6 +237,28 @@ async def assign_space(
             plate_text=plate,
         )
 
+    # Idempotent: a vehicle that is already parked keeps its space. The gate
+    # camera regularly produces several tracks for one car (occlusion, ID
+    # switches), and each would otherwise consume a fresh space.
+    existing_res = await db.execute(
+        select(ParkingSpace).where(
+            ParkingSpace.tenant_id == tenant_id,
+            ParkingSpace.is_occupied.is_(True),
+            ParkingSpace.vehicle_id == profile.id,
+        )
+    )
+    existing = existing_res.scalars().first()
+    if existing is not None:
+        return {
+            "space_id": existing.space_id,
+            "space_pk": existing.id,
+            "plate_text": plate,
+            "profile_type": profile_type,
+            "owner_name": profile.owner_name,
+            "entry_time": existing.entry_time,
+            "already_parked": True,
+        }
+
     space: Optional[ParkingSpace] = None
     if profile_type == "vip":
         res = await db.execute(

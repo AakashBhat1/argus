@@ -18,6 +18,7 @@ import {
   X,
   Car,
   MessageSquare,
+  ShieldAlert,
 } from "lucide-react";
 
 const navSections = [
@@ -25,6 +26,7 @@ const navSections = [
     label: "Overview",
     items: [
       { href: "/", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/security", label: "Security Console", icon: ShieldAlert },
       { href: "/cameras", label: "Cameras", icon: Camera },
     ],
   },

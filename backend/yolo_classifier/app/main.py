@@ -11,7 +11,7 @@ from app.config import get_settings
 from app.database import get_session_factory, init_db
 from app.detection import detector
 from app.models import Camera
-from app.routers import alerts, analytics, cameras, crime, detections, intents, metrics, roboflow, streams, videos, zones, auth, parking, parking_chat
+from app.routers import alerts, analytics, cameras, crime, detections, intents, metrics, roboflow, security, streams, videos, zones, auth, parking, parking_chat
 from app.services.auth import authenticate_websocket
 from app.services.inference_worker import InferenceWorkerPool
 from app.services.metrics import inference_metrics
@@ -119,6 +119,7 @@ app.include_router(zones.router, prefix="/api/v1")
 app.include_router(intents.router, prefix="/api/v1")
 app.include_router(parking.router, prefix="/api/v1")
 app.include_router(parking_chat.router, prefix="/api/v1")
+app.include_router(security.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

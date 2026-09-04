@@ -19,7 +19,8 @@ from app.services.parking_occupancy_service import (
     persist_anomaly_alerts,
     warm_camera_slots,
 )
-from app.services.crime_classifier import crime_classifier
+from app.services.crime_classifier import crime_classifier, risk_trigger as crime_risk_trigger
+from app.services.risk_engine import RiskEvent
 from app.services.roboflow_classifier import roboflow_classifier
 from app.services.websocket_manager import ws_manager
 from app.utils import utc_now
@@ -98,6 +99,8 @@ class VideoStream:
             camera_name=camera.name,
             tenant_id=camera.tenant_id,
             camera_role=self.camera_role,
+            calibration=getattr(camera, "calibration", None),
+            resolution=getattr(camera, "resolution", None),
         )
         self._inference_pool = inference_pool
 
@@ -191,6 +194,16 @@ class VideoStream:
     def is_video_source(self) -> bool:
         return self.stream_url.strip().startswith("video://")
 
+    def update_calibration(self, calibration: Optional[dict]) -> None:
+        self._pipeline.update_calibration(calibration)
+
+    def update_gate(self, role: Optional[str], gate_roi) -> None:
+        self._pipeline.update_gate(role, gate_roi)
+
+    @property
+    def pipeline(self) -> IntrusionPipeline:
+        return self._pipeline
+
     def _update_adaptive_fps(self):
         """Dynamically adjust frame skipping to meet latency targets."""
         if not self._settings.ADAPTIVE_FPS_ENABLED or not self._inference_pool:
@@ -224,6 +237,11 @@ class VideoStream:
 
     async def _process_loop(self):
         loop = asyncio.get_event_loop()
+        # The pipeline executes in a worker thread; give it this loop so gate
+        # OCR can schedule its async work back here.
+        bind_loop = getattr(self._pipeline, "bind_loop", None)
+        if callable(bind_loop):
+            bind_loop(loop)
         self._cap = _open_capture(self.stream_url)
 
         if not self._cap.isOpened():
@@ -328,7 +346,8 @@ class VideoStream:
                         )
                     )
 
-                # Fire ViT classification for intrusion or parking activity.
+                # Fire ViT classification for intrusion, parking activity or
+                # elevated risk (close contact / suspicious behaviour).
                 crime_results_payload: list[dict] = []
                 parking_trigger = (
                     self.camera_role == 'parking'
@@ -337,8 +356,9 @@ class VideoStream:
                         for obj in tracked
                     )
                 )
+                risk_trigger = any(crime_risk_trigger(obj) for obj in tracked)
                 if crime_classifier.enabled and (
-                    intrusion_events or parking_trigger
+                    intrusion_events or parking_trigger or risk_trigger
                 ):
                     asyncio.create_task(
                         self._crime_classify(
@@ -349,8 +369,9 @@ class VideoStream:
                         )
                     )
 
-                if tracked or intrusion_events:
-                    await self._check_alerts(tracked, intrusion_events)
+                risk_events = pipeline_result.risk_events
+                if tracked or intrusion_events or risk_events:
+                    await self._check_alerts(tracked, intrusion_events, risk_events)
 
                 payload: dict = {
                     "camera_id": str(self.camera_id),
@@ -359,6 +380,11 @@ class VideoStream:
                     "timestamp": utc_now().isoformat() + "Z",
                     "detections": tracked,
                     "intrusions": intrusion_payload,
+                    "risk_events": pipeline_result.risk_payload(),
+                    "risk_summary": pipeline_result.risk_summary,
+                    "zones": pipeline_result.zones,
+                    "arm_mode": pipeline_result.arm_mode,
+                    "ground_plane_calibrated": self._pipeline.geometry.has_ground_plane,
                     "crime_classifications": crime_results_payload,
                     "parking_slots": pipeline_result.slot_payload(),
                     "fps": round(self._fps, 1),
@@ -403,6 +429,11 @@ class VideoStream:
                             "intrusion": bool(obj.get("intrusion", False)),
                             "roi_zone_ids": obj.get("roi_zone_ids", []),
                             "max_roi_dwell_sec": float(obj.get("max_roi_dwell_sec", 0.0)),
+                            "distance_m": obj.get("distance_m"),
+                            "risk_score": obj.get("risk_score"),
+                            "risk_level": obj.get("risk_level"),
+                            "authorized": obj.get("authorized"),
+                            "origin": obj.get("origin"),
                         },
                     )
                     session.add(detection)
@@ -414,7 +445,17 @@ class VideoStream:
         self,
         tracked_objects: list[dict],
         intrusion_events: list[IntrusionEvent],
+        risk_events: Optional[list[RiskEvent]] = None,
     ):
+        """Persist and broadcast alerts.
+
+        With the risk engine enabled, person alerts come exclusively from
+        ``RiskEvent`` escalations: the raw zone crossing is a *signal*, the
+        engine decides whether it is worth an operator's attention (armed
+        zone, unauthorized, suspicious behaviour...). When the engine is
+        disabled, the legacy per-incident intrusion alert is used instead.
+        """
+        risk_events = risk_events or []
         alerts_payload: list[dict] = []
         try:
             session_factory = database.get_session_factory()
@@ -442,47 +483,14 @@ class VideoStream:
                         }
                     )
 
-                for event in intrusion_events:
-                    intrusion_alert = Alert(
-                        camera_id=self.camera_id,
-                        tenant_id=self.tenant_id,
-                        type="intrusion_detected",
-                        severity=AlertSeverity.CRITICAL.value,
-                        trigger_condition=(
-                            f"object_{event.object_id} in zone '{event.zone_name}' for "
-                            f"{event.dwell_seconds:.1f}s (threshold {event.threshold_seconds:.1f}s)"
-                        ),
-                        description=(
-                            f"Intruder detected in {event.zone_name} on {self.camera_name} "
-                            f"(object {event.object_id})"
-                        ),
-                        metadata_={
-                            "camera_id": event.camera_id,
-                            "object_id": event.object_id,
-                            "class_label": event.class_label,
-                            "zone_id": event.zone_id,
-                            "zone_name": event.zone_name,
-                            "dwell_seconds": round(event.dwell_seconds, 2),
-                            "threshold_seconds": round(event.threshold_seconds, 2),
-                            "timestamp_unix": round(event.timestamp_unix, 6),
-                        },
-                    )
-                    session.add(intrusion_alert)
-                    await session.flush()
-                    alerts_payload.append(
-                        {
-                            "alert_id": str(intrusion_alert.id),
-                            "camera_id": str(self.camera_id),
-                            "type": "intrusion_detected",
-                            "severity": AlertSeverity.CRITICAL.value,
-                            "zone_id": event.zone_id,
-                            "zone_name": event.zone_name,
-                            "object_id": event.object_id,
-                            "dwell_seconds": round(event.dwell_seconds, 2),
-                            "threshold_seconds": round(event.threshold_seconds, 2),
-                            "timestamp": utc_now().isoformat() + "Z",
-                        }
-                    )
+                if self._settings.RISK_ENGINE_ENABLED:
+                    for event in risk_events:
+                        alerts_payload.append(await self._persist_risk_alert(session, event))
+                else:
+                    for event in intrusion_events:
+                        if not event.new_incident:
+                            continue
+                        alerts_payload.append(await self._persist_legacy_intrusion_alert(session, event))
 
                 if alerts_payload:
                     await session.commit()
@@ -491,6 +499,78 @@ class VideoStream:
                 await ws_manager.broadcast_alert(payload, tenant_id=self.tenant_id)
         except Exception as exc:
             logger.error("Failed to create alerts: %s", exc)
+
+    async def _persist_risk_alert(self, session, event: RiskEvent) -> dict:
+        alert_type = "intrusion_detected" if event.intrusion else "suspicious_activity"
+        if event.threat:
+            alert_type = "blacklisted_vehicle_contact"
+        severity = AlertSeverity.CRITICAL.value if event.level == "critical" else AlertSeverity.HIGH.value
+        where = f" in {', '.join(event.zone_names)}" if event.zone_names else ""
+        distance = f" ~{event.distance_m:.0f} m away" if event.distance_m is not None else ""
+        reasons = "; ".join(event.reasons) or "elevated risk"
+        alert = Alert(
+            camera_id=self.camera_id,
+            tenant_id=self.tenant_id,
+            type=alert_type,
+            severity=severity,
+            trigger_condition=f"risk {event.score:.0f}/100 ({event.level}): {reasons}",
+            description=(
+                f"{event.level.title()} risk person #{event.object_id}{where} on {self.camera_name}{distance}"
+            ),
+            metadata_={
+                "risk": event.to_dict(),
+                "source": "risk_engine",
+            },
+        )
+        session.add(alert)
+        await session.flush()
+        return {
+            "alert_id": str(alert.id),
+            "camera_id": str(self.camera_id),
+            "camera_name": self.camera_name,
+            "type": alert_type,
+            "severity": severity,
+            "object_id": event.object_id,
+            "risk_score": round(event.score, 1),
+            "risk_level": event.level,
+            "reasons": list(event.reasons),
+            "zone_names": list(event.zone_names),
+            "incident_id": event.incident_id,
+            "distance_m": event.distance_m,
+            "timestamp": utc_now().isoformat() + "Z",
+        }
+
+    async def _persist_legacy_intrusion_alert(self, session, event: IntrusionEvent) -> dict:
+        alert = Alert(
+            camera_id=self.camera_id,
+            tenant_id=self.tenant_id,
+            type="intrusion_detected",
+            severity=AlertSeverity.CRITICAL.value,
+            trigger_condition=(
+                f"object_{event.object_id} in zone '{event.zone_name}' for "
+                f"{event.dwell_seconds:.1f}s (threshold {event.threshold_seconds:.1f}s)"
+            ),
+            description=(
+                f"Intruder detected in {event.zone_name} on {self.camera_name} "
+                f"(object {event.object_id})"
+            ),
+            metadata_=event.to_dict(),
+        )
+        session.add(alert)
+        await session.flush()
+        return {
+            "alert_id": str(alert.id),
+            "camera_id": str(self.camera_id),
+            "type": "intrusion_detected",
+            "severity": AlertSeverity.CRITICAL.value,
+            "zone_id": event.zone_id,
+            "zone_name": event.zone_name,
+            "object_id": event.object_id,
+            "incident_id": event.incident_id,
+            "dwell_seconds": round(event.dwell_seconds, 2),
+            "threshold_seconds": round(event.threshold_seconds, 2),
+            "timestamp": utc_now().isoformat() + "Z",
+        }
 
     async def _roboflow_enrich(
         self,
@@ -607,6 +687,10 @@ class VideoStream:
 
             async with session_factory() as session:
                 for cr_result in results:
+                    if cr_result.prediction == "crime":
+                        # Feed the signal back so the next frame's risk score reflects it.
+                        self._pipeline.risk_engine.mark_crime(cr_result.object_id, cr_result.confidence)
+
                     # Update detection metadata with crime classification
                     from sqlalchemy import select
 
@@ -686,6 +770,7 @@ class VideoStream:
             "active_tracks": len(self._last_detections),
             "uptime_seconds": round(time.time() - self._start_time, 1) if self._running else 0,
             "current_frame_skip": self._current_frame_skip,
+            "gate_ocr": self._pipeline.gate_ocr_status(),
         }
 
 
@@ -793,6 +878,23 @@ class StreamManager:
         if camera_id in self._streams:
             return self._streams[camera_id].get_status()
         return None
+
+    def update_camera_calibration(self, camera_id: str, calibration: Optional[dict]) -> bool:
+        stream = self._streams.get(camera_id)
+        if not stream:
+            return False
+        stream.update_calibration(calibration)
+        return True
+
+    def update_camera_gate(self, camera_id: str, role: Optional[str], gate_roi) -> bool:
+        stream = self._streams.get(camera_id)
+        if not stream:
+            return False
+        stream.update_gate(role, gate_roi)
+        return True
+
+    def get_stream(self, camera_id: str) -> Optional[VideoStream]:
+        return self._streams.get(camera_id)
 
     def get_all_status(self) -> list[dict]:
         return [stream.get_status() for stream in self._streams.values()]

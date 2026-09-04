@@ -193,6 +193,9 @@ class OpenVINODetector:
         settings = get_settings()
         self._model_path = model_path or settings.OPENVINO_MODEL_PATH
         self._device = device or settings.OPENVINO_DEVICE
+        self._performance_hint = (
+            (getattr(settings, "OPENVINO_PERFORMANCE_HINT", "LATENCY") or "").strip().upper()
+        )
         self._precision_setting = (settings.OPENVINO_PRECISION or "").strip().upper()
         self._conf_threshold = (
             float(confidence_threshold)
@@ -302,11 +305,15 @@ class OpenVINODetector:
         for device in devices_to_try:
             try:
                 config = {}
-                if device in ("CPU", "AUTO", "GPU"):
-                    config["PERFORMANCE_HINT"] = "THROUGHPUT"
+                if self._performance_hint in ("LATENCY", "THROUGHPUT"):
+                    config["PERFORMANCE_HINT"] = self._performance_hint
                 compiled = core.compile_model(model, device, config)
                 self._actual_device = device
-                logger.info("Successfully compiled model on %s", device)
+                logger.info(
+                    "Successfully compiled model on %s (hint=%s)",
+                    device,
+                    config.get("PERFORMANCE_HINT", "default"),
+                )
                 return compiled
             except Exception as exc:  # pragma: no cover - hardware-dependent
                 logger.warning("Failed to compile model on %s: %s", device, exc)
@@ -770,6 +777,7 @@ class OpenVINODetector:
             "model_config_value": self._model_path,
             "device_requested": self._device,
             "device_actual": self._actual_device,
+            "performance_hint": self._performance_hint or "default",
             "precision": self._resolve_precision(),
             "confidence_threshold": self._conf_threshold,
             "nms_iou_threshold": self._nms_iou,

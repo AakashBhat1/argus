@@ -312,5 +312,81 @@
     "camera_ids": [
       "16fcdcca-a48c-4296-a300-e16bdd8ae264"
     ]
+  },
+  {
+    "zone_id": 7,
+    "name": "Restricted lot",
+    "points": [
+      [
+        0.45,
+        0.35
+      ],
+      [
+        0.98,
+        0.35
+      ],
+      [
+        0.98,
+        0.98
+      ],
+      [
+        0.45,
+        0.98
+      ]
+    ],
+    "threshold_sec": 2.0,
+    "color": [
+      0,
+      255,
+      255
+    ],
+    "zone_type": "restricted",
+    "armed_schedule": {
+      "mode": "always",
+      "windows": [],
+      "tz": "UTC"
+    },
+    "allowed_classes": [],
+    "camera_ids": [
+      "f5bc8864-ecfc-4b5d-aab9-99276597e826"
+    ]
+  },
+  {
+    "zone_id": 8,
+    "name": "Desk restricted",
+    "points": [
+      [
+        0.05,
+        0.05
+      ],
+      [
+        0.95,
+        0.05
+      ],
+      [
+        0.95,
+        0.98
+      ],
+      [
+        0.05,
+        0.98
+      ]
+    ],
+    "threshold_sec": 3.0,
+    "color": [
+      0,
+      255,
+      255
+    ],
+    "zone_type": "restricted",
+    "armed_schedule": {
+      "mode": "always",
+      "windows": [],
+      "tz": "UTC"
+    },
+    "allowed_classes": [],
+    "camera_ids": [
+      "79aed501-a3ec-4c45-a962-b91092c0e0ec"
+    ]
   }
 ]

@@ -175,6 +175,15 @@ class TrajectoryAccumulator:
         return len(self._buffers)
 
 
+def compute_features(
+    object_id: int,
+    class_label: str,
+    points: list[TrajectoryPoint],
+) -> Optional[TrajectoryFeatures]:
+    """Public entry point: compute features for any (possibly live) point list."""
+    return _compute_features(object_id, class_label, points)
+
+
 def _compute_features(
     object_id: int,
     class_label: str,

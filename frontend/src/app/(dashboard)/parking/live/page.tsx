@@ -3,9 +3,12 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   api,
+  GATE_ROLES,
   type DetectedPlate,
   type Camera,
+  type GateOcrStatus,
 } from "@/lib/api";
+import Link from "next/link";
 import { useWebSocket } from "@/lib/websocket";
 import ParkBotChat from "@/components/parking/ParkBotChat";
 import SecurityConsole, { type LogEntry } from "@/components/parking/SecurityConsole";
@@ -32,8 +35,11 @@ export default function ParkingLivePage() {
 
   // Live stream state
   const [gateCameras, setGateCameras] = useState<Camera[]>([]);
+  const [allCameras, setAllCameras] = useState<Camera[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
   const [streamFrame, setStreamFrame] = useState<any>(null);
+  const [ocrStatus, setOcrStatus] = useState<GateOcrStatus | null>(null);
+  const [streamRunning, setStreamRunning] = useState<boolean | null>(null);
 
   // Plate crops (recent plates list)
   const [recentPlates, setRecentPlates] = useState<DetectedPlate[]>([]);
@@ -45,6 +51,13 @@ export default function ParkingLivePage() {
   const { lastMessage: parkingWsMessage, isConnected: isParkingConnected } = useWebSocket("parking");
   const { lastMessage: globalWsMessage, isConnected: isGlobalConnected } = useWebSocket("global");
 
+  const addLog = useCallback((type: "info" | "success" | "warn" | "system", message: string) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    const timestamp = new Date().toLocaleTimeString([], { hour12: false });
+    const newEntry = { id, timestamp, type, message };
+    setLogs((prev) => [...prev, newEntry].slice(-50)); // Keep last 50 logs
+  }, []);
+
   // Fetch initial data
   const loadInitialData = useCallback(async () => {
     try {
@@ -55,11 +68,14 @@ export default function ParkingLivePage() {
 
       // Get cameras
       const camList = await api.cameras.list(true);
-      // Filter for parking gate cameras
-      const gateCams = camList.filter(
-        (c) => c.location?.toLowerCase().includes("gate") || c.name?.toLowerCase().includes("gate")
-      );
+      // Gate cameras are the ones with a gate role (that is what makes OCR
+      // fire). Fall back to name/location matching for legacy setups.
+      const byRole = camList.filter((c) => GATE_ROLES.includes(c.role || ""));
+      const gateCams = byRole.length > 0
+        ? byRole
+        : camList.filter((c) => c.location?.toLowerCase().includes("gate") || c.name?.toLowerCase().includes("gate"));
       setGateCameras(gateCams.length > 0 ? gateCams : camList);
+      setAllCameras(camList);
       if (gateCams.length > 0) {
         setSelectedCameraId(gateCams[0].id);
       } else if (camList.length > 0) {
@@ -77,20 +93,38 @@ export default function ParkingLivePage() {
       console.error("Failed to load initial live data:", err);
       addLog("warn", "System warning: failed to retrieve full environment settings.");
     }
-  }, []);
-
-  const addLog = useCallback((type: "info" | "success" | "warn" | "system", message: string) => {
-    const id = Math.random().toString(36).substring(2, 9);
-    const timestamp = new Date().toLocaleTimeString([], { hour12: false });
-    const newEntry = { id, timestamp, type, message };
-    setLogs((prev) => [...prev, newEntry].slice(-50)); // Keep last 50 logs
-  }, []);
+  }, [addLog]);
 
   // Mount logic
   useEffect(() => {
     setMounted(true);
     loadInitialData();
   }, [loadInitialData]);
+
+  // Poll the selected camera's stream status: tells us whether plate OCR is
+  // actually armed (gate role + gate polygon) rather than assuming it is.
+  useEffect(() => {
+    if (!selectedCameraId) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const st = await api.streams.cameraStatus(selectedCameraId);
+        if (cancelled) return;
+        setStreamRunning(!!st?.is_running);
+        setOcrStatus(st?.gate_ocr ?? null);
+      } catch {
+        if (cancelled) return;
+        setStreamRunning(false);
+        setOcrStatus(null);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [selectedCameraId]);
 
   // Handle global WebSocket (contains frame image data and YOLO detections)
   useEffect(() => {
@@ -273,14 +307,47 @@ export default function ParkingLivePage() {
                     })}
                   </svg>
 
-                  {/* Processing Badge */}
-                  <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-900/70 border border-slate-700/30 backdrop-blur-sm">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">OCR Ingestion Active</span>
+                  {/* OCR status badge — reflects the real gate configuration */}
+                  <div
+                    className={`absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-900/70 border backdrop-blur-sm ${
+                      ocrStatus?.active ? "border-emerald-500/30" : "border-amber-500/30"
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${ocrStatus?.active ? "bg-emerald-400 animate-pulse" : "bg-amber-400"}`} />
+                    <span className={`text-[9px] font-bold uppercase tracking-wider ${ocrStatus?.active ? "text-emerald-400" : "text-amber-300"}`}>
+                      {ocrStatus?.active
+                        ? `OCR active · ${ocrStatus.plates_read} plates / ${ocrStatus.vehicles_in_gate} vehicles`
+                        : "OCR inactive"}
+                    </span>
                   </div>
                 </div>
               )}
             </div>
+
+            {/* Why OCR is not firing, with a direct fix */}
+            {selectedCameraId && ocrStatus && !ocrStatus.active && (
+              <div className="mt-3 flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] px-4 py-3">
+                <div className="flex-1 text-[11px] text-amber-200">
+                  <p className="font-semibold">Number-plate OCR is not running on this camera</p>
+                  <p className="text-amber-200/80 mt-0.5">{ocrStatus.reason}</p>
+                  {ocrStatus.last_error && <p className="text-amber-200/60 mt-0.5">Last attempt: {ocrStatus.last_error}</p>}
+                </div>
+                <Link
+                  href="/cameras"
+                  className="shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25"
+                >
+                  Open Scene Setup → Gate
+                </Link>
+              </div>
+            )}
+            {selectedCameraId && streamRunning === false && (
+              <div className="mt-3 rounded-xl border border-slate-700/40 bg-slate-900/40 px-4 py-3 text-[11px] text-slate-400">
+                Stream is not running for this camera — start it from the Cameras page.
+                {allCameras.length > 0 && !allCameras.some((c) => GATE_ROLES.includes(c.role || "")) && (
+                  <span> No camera has a gate role yet; OCR only runs on <span className="text-slate-200">gate entry</span> / <span className="text-slate-200">gate exit</span> cameras.</span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Plate Crops (License Plate Cards) */}

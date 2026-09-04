@@ -73,6 +73,43 @@ def _fallback_allowed() -> bool:
     }
 
 
+def _ensure_columns(sync_conn) -> None:
+    """Add columns that ``create_all`` cannot add to pre-existing tables.
+
+    Production deployments run Alembic; this keeps local SQLite databases
+    created before a column existed usable without a manual migration.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        present = {col["name"] for col in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present:
+                continue
+            col_type = column.type.compile(dialect=sync_conn.dialect)
+            has_scalar_default = column.default is not None and getattr(column.default, "is_scalar", False)
+            if not column.nullable and not has_scalar_default:
+                logger.warning(
+                    "Column %s.%s is missing and cannot be auto-added (NOT NULL without default); run alembic.",
+                    table.name,
+                    column.name,
+                )
+                continue
+            nullable = "" if column.nullable else " NOT NULL"
+            default = ""
+            if has_scalar_default:
+                value = column.default.arg
+                default = f" DEFAULT {value!r}" if isinstance(value, str) else f" DEFAULT {value}"
+            sync_conn.execute(
+                text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}{nullable}{default}')
+            )
+            logger.info("Added missing column %s.%s", table.name, column.name)
+
+
 async def init_db():
     global engine
     if engine is None:
@@ -81,6 +118,7 @@ async def init_db():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_ensure_columns)
         return
     except Exception as exc:
         if DATABASE_URL.startswith("sqlite"):

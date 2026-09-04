@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     # AUTO lets OpenVINO pick the best available device automatically.
     OPENVINO_DEVICE: str = "AUTO"
 
+    # OpenVINO PERFORMANCE_HINT: LATENCY | THROUGHPUT | (empty = plugin default).
+    # The detector issues synchronous single-frame requests, so LATENCY is the
+    # right choice everywhere. THROUGHPUT on Intel iGPUs allocates ~16 streams
+    # and makes each blocking call hundreds of times slower (measured 1.6 s vs
+    # 4.5 ms for YOLOv8n on an Arc iGPU).
+    OPENVINO_PERFORMANCE_HINT: str = "LATENCY"
+
     # Model precision indicator (for logging/metrics only; actual precision
     # is determined by the converted model file).
     OPENVINO_PRECISION: str = "INT8"
@@ -102,6 +109,45 @@ class Settings(BaseSettings):
 
     # Classes that are considered intruders when entering ROI.
     ROI_INTRUDER_CLASSES: list[str] = ["person"]
+
+    # Reference point used for zone membership: "foot" (bottom-centre of the
+    # bbox, correct for ground-plane zones) or "center".
+    ROI_ANCHOR: str = "foot"
+
+    # Dwell state survives tracker dropouts shorter than this (seconds).
+    ROI_TRACK_GRACE_SEC: float = 2.0
+
+    # A zone incident stays open (suppressing duplicate alerts) until no
+    # intruder has been seen in that zone for this many seconds.
+    ROI_INCIDENT_HOLDDOWN_SEC: float = 30.0
+
+    # -- Contextual Risk Engine ----------------------------------------------
+
+    RISK_ENGINE_ENABLED: bool = True
+    # Score thresholds (0-100) for the escalation ladder.
+    RISK_LEVEL_SUSPICIOUS: int = 25
+    RISK_LEVEL_ALERT: int = 50
+    RISK_LEVEL_CRITICAL: int = 75
+    # Minimum seconds between escalation alerts for the same track.
+    RISK_ALERT_COOLDOWN_SEC: float = 20.0
+    # Quiet hours add risk (local time in RISK_QUIET_HOURS_TZ).
+    RISK_QUIET_HOURS_START: int = 22
+    RISK_QUIET_HOURS_END: int = 6
+    RISK_QUIET_HOURS_TZ: str = "UTC"
+    # Persons within this ground distance for RISK_CLOSE_CONTACT_SEC count as
+    # "close contact" (pre-fight signal, also gates the heavier classifiers).
+    RISK_CLOSE_CONTACT_M: float = 1.5
+    RISK_CLOSE_CONTACT_SEC: float = 2.0
+    # A person that appears next to a vehicle inherits that vehicle's
+    # authorization for this long (seconds).
+    RISK_VEHICLE_LINK_TTL_SEC: float = 600.0
+    # Vehicle profile types treated as authorized when a plate is read.
+    RISK_AUTHORIZED_PROFILE_TYPES: list[str] = ["vip", "resident", "staff"]
+    # Default duration for a manually granted visitor window (minutes).
+    RISK_MANUAL_GRANT_MINUTES: int = 15
+
+    # Default camera horizontal field of view when no calibration is stored.
+    CAMERA_DEFAULT_HFOV_DEG: float = 84.0
 
     # Classes to include in JSONL activity logging.
     MONITORED_CLASSES: list[str] = list(DEFAULT_ALLOWED_CLASSES)

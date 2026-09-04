@@ -68,6 +68,21 @@ def is_valid_plate(plate_text: str) -> bool:
     return bool(PLATE_REGEX.match(normalize_plate_text(plate_text)))
 
 
+# Loose plausibility gate for plates that don't match the strict Indian
+# format (BH-series, older formats, foreign plates): at least 6 characters
+# containing both letters and digits. Rejects OCR noise like "L" or "1234".
+MIN_PLATE_CHARS = 6
+
+
+def is_plausible_plate(plate_text: str) -> bool:
+    text = normalize_plate_text(plate_text)
+    if is_valid_plate(text):
+        return True
+    if len(text) < MIN_PLATE_CHARS or len(text) > 12:
+        return False
+    return any(c.isalpha() for c in text) and any(c.isdigit() for c in text)
+
+
 def preprocess_plate_image(img_bgr: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     enhanced = cv2.convertScaleAbs(gray, alpha=1.5, beta=10)
@@ -109,13 +124,18 @@ def recognize_plate(img_bgr: np.ndarray) -> tuple[Optional[str], str, float]:
         if not plate:
             return None, "Unknown", 0.0
 
+        if not is_plausible_plate(plate):
+            logger.info("OCR rejected implausible plate text %r (conf %.2f)", plate, confidence)
+            return None, "Rejected", round(float(confidence), 3)
+
         if confidence < settings.PARKING_OCR_CONFIDENCE_THRESHOLD:
-            logger.debug(
-                "OCR confidence %.3f below threshold %.3f for %s",
+            logger.info(
+                "OCR rejected %s: confidence %.2f below threshold %.2f",
+                plate,
                 confidence,
                 settings.PARKING_OCR_CONFIDENCE_THRESHOLD,
-                plate,
             )
+            return None, "LowConfidence", round(float(confidence), 3)
 
         state = find_state(plate)
         return plate, state, round(float(confidence), 3)

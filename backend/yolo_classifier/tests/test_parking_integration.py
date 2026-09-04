@@ -527,3 +527,28 @@ class TestParkingIntegration:
         assert preserved.vehicle_id == profile_id
         assert preserved.entry_time == original_entry
         assert preserved.polygon == original_polygon
+
+
+@pytest.mark.asyncio
+async def test_assign_space_is_idempotent_for_a_parked_vehicle(app_with_db, db_session):
+    '''A car re-tracked at the gate must not consume a second space.'''
+    await seed_parking_spaces_for_tenant(db_session, 'tenant-1')
+    plate = f'KA{uuid.uuid4().hex[:8].upper()}'
+    await parking_service.record_detected_plate(db_session, 'tenant-1', plate)
+    first = await parking_service.assign_space(db_session, 'tenant-1', plate)
+    assert first is not None and not first.get('already_parked')
+
+    await parking_service.record_detected_plate(db_session, 'tenant-1', plate)
+    second = await parking_service.assign_space(db_session, 'tenant-1', plate)
+    assert second is not None
+    assert second['space_id'] == first['space_id']
+    assert second['already_parked'] is True
+
+    occupied = (
+        await db_session.execute(
+            select(ParkingSpace).where(
+                ParkingSpace.tenant_id == 'tenant-1', ParkingSpace.is_occupied.is_(True)
+            )
+        )
+    ).scalars().all()
+    assert len(occupied) == 1

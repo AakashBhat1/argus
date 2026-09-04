@@ -14,6 +14,8 @@ import numpy as np
 
 from app.config import get_settings
 from app.database import get_session_factory
+from app.models import VehicleProfile
+from app.services.authorization import authorization_registry
 from app.services.ocr_service import recognize_plate
 from app.services import parking_service
 from app.services.websocket_manager import ws_manager
@@ -98,7 +100,20 @@ class GateOcrTrigger:
         self._camera_role: Optional[str] = None
         self._gate_roi: Any = None
         self._meta_loaded = False
-        self._pending: set[asyncio.Task] = set()
+        self._pending: set[Any] = set()
+        # The pipeline runs in a worker thread, so we need the owning event
+        # loop to hand OCR work back to. Captured here when constructed on
+        # the loop, or set later via bind_loop().
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        self._inactive_reason_logged: Optional[str] = None
+        self._vehicles_in_gate = 0
+        self._plates_read = 0
+        self._last_plate: Optional[str] = None
+        self._last_error: Optional[str] = None
 
     def reset(self) -> None:
         self._seen_tracks.clear()
@@ -106,6 +121,65 @@ class GateOcrTrigger:
         for t in list(self._pending):
             t.cancel()
         self._pending.clear()
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Attach the event loop that owns this camera's stream.
+
+        Also kicks off the camera-metadata load so ``status()`` is meaningful
+        before the first vehicle shows up.
+        """
+        self._loop = loop
+        if self._meta_loaded or loop.is_closed():
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            loop.create_task(self.load_camera_meta())
+        else:
+            asyncio.run_coroutine_threadsafe(self.load_camera_meta(), loop)
+
+    def update_meta(self, role: Optional[str], gate_roi: Any) -> None:
+        """Hot-swap camera role / gate polygon without restarting the stream."""
+        self._camera_role = (role or "surveillance").lower()
+        self._gate_roi = gate_roi
+        self._meta_loaded = True
+        self._inactive_reason_logged = None
+        # A new gate polygon means vehicles already seen may now cross it.
+        self._seen_tracks.clear()
+        logger.info(
+            "Gate OCR config updated for cam=%s role=%s gate_roi=%s",
+            self.camera_id,
+            self._camera_role,
+            "set" if gate_roi else "none",
+        )
+
+    def inactive_reason(self) -> Optional[str]:
+        """Why OCR will not fire on this camera right now (None = active)."""
+        if not self._meta_loaded:
+            return "camera metadata not loaded yet"
+        if self._camera_role not in GATE_ROLES:
+            return (
+                f"camera role is '{self._camera_role or 'surveillance'}'; "
+                "set it to gate_entry or gate_exit"
+            )
+        if not self._gate_roi:
+            return "no gate polygon drawn (Scene Setup → Gate tab)"
+        return None
+
+    def status(self) -> dict:
+        reason = self.inactive_reason()
+        return {
+            "active": reason is None,
+            "reason": reason,
+            "role": self._camera_role,
+            "has_gate_roi": bool(self._gate_roi),
+            "vehicles_in_gate": self._vehicles_in_gate,
+            "plates_read": self._plates_read,
+            "last_plate": self._last_plate,
+            "last_error": self._last_error,
+        }
 
     async def load_camera_meta(self) -> None:
         if self._meta_loaded:
@@ -136,7 +210,11 @@ class GateOcrTrigger:
         tracked_objects: list[dict],
         frame: np.ndarray,
     ) -> None:
-        """Sync entry from pipeline; schedules async OCR work when needed."""
+        """Sync entry from pipeline; schedules async OCR work when needed.
+
+        Safe to call from a worker thread (the pipeline runs in an executor):
+        work is handed to the bound event loop thread-safely.
+        """
         if frame is None:
             return
         settings = get_settings()
@@ -144,17 +222,39 @@ class GateOcrTrigger:
             c.strip().lower() for c in settings.PARKING_OCR_TRIGGER_CLASSES
         }
 
-        # Fire-and-forget meta load + evaluation
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
+        # Cheap pre-filter: nothing to do without a vehicle in view. Also
+        # avoids copying the frame every tick.
+        if not any(
+            str(o.get("class_label", "")).strip().lower() in trigger_classes
+            for o in tracked_objects
+        ):
+            return
+        # Bounded backlog: OCR is slow relative to frame rate.
+        if len(self._pending) >= 4:
             return
 
-        task = loop.create_task(
-            self._evaluate_async(tracked_objects, frame, trigger_classes)
-        )
-        self._pending.add(task)
-        task.add_done_callback(self._pending.discard)
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        loop = running or self._loop
+        if loop is None or loop.is_closed():
+            if self._inactive_reason_logged != "no-loop":
+                logger.warning(
+                    "Gate OCR for cam=%s has no event loop bound; call bind_loop()",
+                    self.camera_id,
+                )
+                self._inactive_reason_logged = "no-loop"
+            return
+
+        coro = self._evaluate_async(tracked_objects, frame.copy(), trigger_classes)
+        if running is loop:
+            handle: Any = loop.create_task(coro)
+        else:
+            handle = asyncio.run_coroutine_threadsafe(coro, loop)
+        self._pending.add(handle)
+        handle.add_done_callback(self._pending.discard)
 
     async def _evaluate_async(
         self,
@@ -163,9 +263,15 @@ class GateOcrTrigger:
         trigger_classes: set[str],
     ) -> None:
         await self.load_camera_meta()
-        if self._camera_role not in GATE_ROLES:
-            return
-        if not self._gate_roi:
+        reason = self.inactive_reason()
+        if reason is not None:
+            # Log once per configuration so a silent "OCR never fires" is
+            # diagnosable from the server log.
+            if self._inactive_reason_logged != reason and any(
+                str(o.get("class_label", "")).lower() in trigger_classes for o in tracked_objects
+            ):
+                logger.info("Gate OCR inactive for cam=%s: %s", self.camera_id, reason)
+                self._inactive_reason_logged = reason
             return
 
         fh, fw = frame.shape[:2]
@@ -184,6 +290,7 @@ class GateOcrTrigger:
 
             # Mark seen BEFORE OCR so we only fire once per track
             self._seen_tracks.add(track_key)
+            self._vehicles_in_gate += 1
             crop = crop_vehicle(frame, obj)
             if crop is None:
                 continue
@@ -191,12 +298,17 @@ class GateOcrTrigger:
             loop = asyncio.get_running_loop()
             plate, state, conf = await loop.run_in_executor(None, recognize_plate, crop)
             if not plate:
-                logger.debug(
-                    "Gate OCR: no plate for track=%s cam=%s",
+                self._last_error = f"no readable plate on track {track_key}"
+                logger.info(
+                    "Gate OCR: vehicle track=%s entered gate on cam=%s but no plate was read (state=%s)",
                     track_key,
                     self.camera_id,
+                    state,
                 )
                 continue
+            self._plates_read += 1
+            self._last_plate = plate
+            self._last_error = None
 
             try:
                 factory = get_session_factory()
@@ -216,7 +328,22 @@ class GateOcrTrigger:
                         assign_result = await parking_service.assign_space(
                             session, self.tenant_id, plate
                         )
+                    profile = await session.get(VehicleProfile, det.vehicle_id) if det.vehicle_id else None
                     await session.commit()
+
+                # Tell the site authorization registry who just arrived so that
+                # persons stepping out of this vehicle inherit its status.
+                try:
+                    authorization_registry.register_vehicle_plate(
+                        self.tenant_id,
+                        camera_id=self.camera_id,
+                        track_id=int(track_key),
+                        plate_text=plate,
+                        profile_type=profile.profile_type if profile else None,
+                        owner_name=profile.owner_name if profile else None,
+                    )
+                except (TypeError, ValueError):
+                    logger.debug("Gate OCR: could not register plate for track %s", track_key)
 
                 payload = {
                     "type": "parking",

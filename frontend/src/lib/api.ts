@@ -42,6 +42,13 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
   }
 }
 
+export interface CameraCalibration {
+  hfov_deg: number;
+  homography_image_points: number[][];
+  homography_world_points: number[][];
+  class_sizes_m?: Record<string, Record<string, number>>;
+}
+
 export interface Camera {
   id: string;
   name: string;
@@ -51,9 +58,124 @@ export interface Camera {
   resolution: string;
   fps: number;
   is_active: boolean;
-  role?: string;
+  role?: CameraRole | string;
+  gate_roi?: number[][] | null;
+  calibration?: CameraCalibration | null;
   created_at: string;
   updated_at: string;
+}
+
+export type CameraRole = "surveillance" | "gate_entry" | "gate_exit" | "parking";
+
+export const CAMERA_ROLES: { value: CameraRole; label: string; hint: string }[] = [
+  { value: "surveillance", label: "Surveillance", hint: "Intrusion zones, risk scoring, distance" },
+  { value: "gate_entry", label: "Gate entry", hint: "Plate OCR on vehicles crossing the gate polygon; auto-assigns a space" },
+  { value: "gate_exit", label: "Gate exit", hint: "Plate OCR on exit; releases the space and bills the stay" },
+  { value: "parking", label: "Parking lot", hint: "Slot occupancy, ghost/loiter/car-hop anomalies" },
+];
+
+export const GATE_ROLES: readonly string[] = ["gate_entry", "gate_exit"];
+
+export type ZoneType = "restricted" | "perimeter" | "entrance" | "driveway" | "parking" | "public";
+
+export interface ScheduleWindow {
+  start: string;
+  end: string;
+  days: number[];
+}
+
+export interface ArmedSchedule {
+  mode: "always" | "never" | "schedule";
+  windows: ScheduleWindow[];
+  tz: string;
+}
+
+export interface Zone {
+  zone_id: number;
+  name: string;
+  points: number[][];
+  threshold_sec: number;
+  color: number[];
+  camera_ids: string[] | null;
+  zone_type: ZoneType;
+  armed_schedule: ArmedSchedule;
+  allowed_classes: string[];
+  armed_now?: boolean;
+}
+
+export interface ZoneInput {
+  name: string;
+  points: { x: number; y: number }[];
+  threshold_sec?: number;
+  color?: number[];
+  camera_ids?: string[];
+  zone_type?: ZoneType;
+  armed_schedule?: ArmedSchedule;
+  allowed_classes?: string[];
+}
+
+export type RiskLevel = "observe" | "suspicious" | "alert" | "critical";
+export type ArmMode = "armed" | "disarmed" | "auto";
+
+export interface Grant {
+  grant_id: string;
+  tenant_id: string;
+  kind: string;
+  scope: string;
+  label: string;
+  granted_at: number;
+  expires_at: number;
+  seconds_remaining: number;
+  camera_id?: string | null;
+  track_id?: number | null;
+  subject?: string | null;
+  note?: string | null;
+  threat: boolean;
+}
+
+export interface CameraRisk {
+  camera_id: string;
+  camera_name: string;
+  is_running: boolean;
+  risk: { max_score: number; level: RiskLevel; persons: number; authorized?: number };
+  ground_plane_calibrated: boolean;
+  hfov_deg: number;
+}
+
+export interface SecurityState {
+  arm_mode: ArmMode;
+  grants: Grant[];
+  cameras: CameraRisk[];
+  arm_modes: ArmMode[];
+}
+
+export interface RiskEvent {
+  camera_id: string;
+  object_id: number;
+  class_label: string;
+  score: number;
+  level: RiskLevel;
+  previous_level: RiskLevel;
+  reasons: string[];
+  timestamp_unix: number;
+  intrusion: boolean;
+  incident_id: string | null;
+  zone_ids: number[];
+  zone_names: string[];
+  distance_m: number | null;
+  authorized: boolean;
+  threat: boolean;
+}
+
+export interface LiveZone {
+  zone_id: number;
+  name: string;
+  points: number[][];
+  threshold_sec: number;
+  color: number[];
+  zone_type: ZoneType;
+  armed: boolean;
+  allowed_classes: string[];
 }
 
 interface Detection {
@@ -170,6 +292,18 @@ export interface StreamStatus {
   active_tracks: number;
   uptime_seconds: number;
   current_frame_skip: number;
+  gate_ocr?: GateOcrStatus;
+}
+
+export interface GateOcrStatus {
+  active: boolean;
+  reason: string | null;
+  role: string | null;
+  has_gate_roi: boolean;
+  vehicles_in_gate: number;
+  plates_read: number;
+  last_plate: string | null;
+  last_error: string | null;
 }
 
 export interface ModelInfo {
@@ -210,6 +344,31 @@ export interface DetectionOverlay {
   bbox_y: number;
   bbox_w: number;
   bbox_h: number;
+  // ROI / geometry / risk enrichment (present when the risk engine runs)
+  inside_roi?: boolean;
+  intrusion?: boolean;
+  roi_zone_ids?: number[];
+  max_roi_dwell_sec?: number;
+  anchor_x?: number;
+  anchor_y?: number;
+  distance_m?: number | null;
+  ground_x_m?: number | null;
+  ground_y_m?: number | null;
+  ground_source?: "homography" | "pinhole" | null;
+  truncated?: boolean;
+  risk_score?: number;
+  risk_level?: RiskLevel;
+  risk_reasons?: string[];
+  authorized?: boolean;
+  auth_source?: string | null;
+  auth_label?: string | null;
+  threat?: boolean;
+  origin?: string;
+  linked_vehicle_track?: number | null;
+  behaviour?: string;
+  close_contacts?: number[];
+  speed_mps?: number | null;
+  track_age_sec?: number;
 }
 
 export interface FeedData {
@@ -226,6 +385,11 @@ export interface FeedData {
   is_video_source?: boolean;
   is_paused?: boolean;
   frame_skip?: number;
+  zones?: LiveZone[];
+  risk_events?: RiskEvent[];
+  risk_summary?: { max_score: number; level: RiskLevel; persons: number; authorized?: number };
+  arm_mode?: ArmMode;
+  ground_plane_calibrated?: boolean;
 }
 
 export interface ParkingSpace {
@@ -295,7 +459,7 @@ export interface ParkingChatResponse {
 }
 
 export interface FeedMessage {
-  type: "detections" | "alert" | "parking";
+  type: "detections" | "alert" | "parking" | "security";
   data: any;
 }
 
@@ -362,6 +526,9 @@ export const api = {
       fetchApi<{ status: string }>(`/streams/${cameraId}/stop`, { method: "POST" }),
     status: () =>
       fetchApi<{ streams: StreamStatus[] }>("/streams/status"),
+    /** Per-camera status; 404s when the stream is not running. */
+    cameraStatus: (cameraId: string) =>
+      fetchApi<StreamStatus>(`/streams/${cameraId}/status`),
     stopAll: () =>
       fetchApi<{ status: string }>("/streams/stop-all", { method: "POST" }),
     pause: (cameraId: string) =>
@@ -375,14 +542,30 @@ export const api = {
   zones: {
     list: (cameraId?: string) => {
       const qs = cameraId ? `?camera_id=${cameraId}` : "";
-      return fetchApi<{ zone_id: number; name: string; points: number[][]; threshold_sec: number; color: number[]; camera_ids: string[] | null }[]>(`/zones/${qs}`);
+      return fetchApi<Zone[]>(`/zones/${qs}`);
     },
-    create: (data: { name: string; points: { x: number; y: number }[]; threshold_sec?: number; color?: number[]; camera_ids?: string[] }) =>
-      fetchApi<{ zone_id: number; name: string }>("/zones/", { method: "POST", body: JSON.stringify(data) }),
+    types: () => fetchApi<{ type: ZoneType; label: string; description: string }[]>("/zones/types"),
+    create: (data: ZoneInput) =>
+      fetchApi<Zone>("/zones/", { method: "POST", body: JSON.stringify(data) }),
     delete: (zoneId: number) =>
       fetchApi<void>(`/zones/${zoneId}`, { method: "DELETE" }),
-    update: (zoneId: number, data: { name: string; points: { x: number; y: number }[]; threshold_sec?: number; color?: number[]; camera_ids?: string[] }) =>
-      fetchApi<{ zone_id: number; name: string }>(`/zones/${zoneId}`, { method: "PUT", body: JSON.stringify(data) }),
+    update: (zoneId: number, data: ZoneInput) =>
+      fetchApi<Zone>(`/zones/${zoneId}`, { method: "PUT", body: JSON.stringify(data) }),
+  },
+
+  security: {
+    state: () => fetchApi<SecurityState>("/security/state"),
+    arm: (mode: ArmMode) =>
+      fetchApi<{ arm_mode: ArmMode }>("/security/arm", { method: "PUT", body: JSON.stringify({ mode }) }),
+    grants: () => fetchApi<Grant[]>("/security/grants"),
+    grantSite: (data: { minutes: number; label: string; note?: string }) =>
+      fetchApi<Grant>("/security/grants/site", { method: "POST", body: JSON.stringify(data) }),
+    grantTrack: (data: { camera_id: string; track_id: number; label: string; minutes?: number; note?: string }) =>
+      fetchApi<Grant>("/security/grants/track", { method: "POST", body: JSON.stringify(data) }),
+    registerVehicle: (data: { camera_id: string; track_id: number; plate_text: string; profile_type: string; owner_name?: string }) =>
+      fetchApi<{ plate_text: string; grant: Grant | null }>("/security/vehicles/register", { method: "POST", body: JSON.stringify(data) }),
+    revoke: (grantId: string) =>
+      fetchApi<void>(`/security/grants/${grantId}`, { method: "DELETE" }),
   },
 
   videos: {

@@ -87,6 +87,20 @@ class WebSocketManager:
 
         await self._send_to_global(tenant_id, message)
 
+    async def broadcast_security(self, data: dict, tenant_id: str = "1"):
+        """Security-state changes (arm mode, grants) — alerts channel + global."""
+        message = json.dumps({"type": "security", "data": data})
+        dead = []
+        alert_conns = self._alert_connections.get(tenant_id, [])
+        for ws in alert_conns:
+            try:
+                await ws.send_text(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            alert_conns.remove(ws)
+        await self._send_to_global(tenant_id, message)
+
     async def broadcast_to_channel(self, tenant_id: str, channel: str, data: dict):
         """Broadcast a JSON payload to a named channel for one tenant only."""
         message = json.dumps(data)

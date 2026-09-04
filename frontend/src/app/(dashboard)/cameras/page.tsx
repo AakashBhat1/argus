@@ -15,8 +15,9 @@ import {
   FileVideo,
   HardDrive,
   Pentagon,
+  ScanLine,
 } from "lucide-react";
-import { api, type Camera as CameraType, type StreamStatus } from "@/lib/api";
+import { api, CAMERA_ROLES, GATE_ROLES, type Camera as CameraType, type CameraRole, type StreamStatus } from "@/lib/api";
 import { cn, statusColor } from "@/lib/utils";
 import ZoneEditor from "@/components/ZoneEditor";
 
@@ -31,12 +32,20 @@ export default function CamerasPage() {
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    name: string;
+    location: string;
+    stream_url: string;
+    resolution: string;
+    fps: number;
+    role: CameraRole;
+  }>({
     name: "",
     location: "",
     stream_url: "0",
     resolution: "1280x720",
     fps: 30,
+    role: "surveillance",
   });
   const [streamStatus, setStreamStatus] = useState<
     Record<string, StreamStatus>
@@ -132,10 +141,21 @@ export default function CamerasPage() {
         stream_url: "0",
         resolution: "1280x720",
         fps: 30,
+        role: "surveillance",
       });
       loadCameras();
     } catch (err) {
       console.error("Failed to add camera:", err);
+    }
+  }
+
+  async function handleChangeRole(id: string, role: CameraRole) {
+    try {
+      await api.cameras.update(id, { role });
+      loadCameras();
+      loadStreamStatus();
+    } catch (err) {
+      console.error("Failed to change camera role:", err);
     }
   }
 
@@ -346,6 +366,31 @@ export default function CamerasPage() {
                 setForm({ ...form, fps: parseInt(e.target.value) })
               }
             />
+            <div className="md:col-span-2">
+              <label className="text-[10px] text-slate-500 block mb-1.5">Camera role</label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
+                {CAMERA_ROLES.map((r) => (
+                  <button
+                    type="button"
+                    key={r.value}
+                    onClick={() => setForm({ ...form, role: r.value })}
+                    title={r.hint}
+                    className={cn(
+                      "px-2 py-1.5 rounded-lg border text-[11px] transition-colors text-left",
+                      form.role === r.value
+                        ? "border-slate-500/60 bg-slate-800 text-slate-100"
+                        : "border-slate-700/30 text-slate-400 hover:bg-slate-800/60"
+                    )}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-600 mt-1">
+                {CAMERA_ROLES.find((r) => r.value === form.role)?.hint}
+                {GATE_ROLES.includes(form.role) && " — after saving, draw the gate polygon in Scene Setup → Gate."}
+              </p>
+            </div>
           </div>
           <div className="flex gap-3">
             <button type="submit" className="btn-primary">
@@ -415,6 +460,16 @@ export default function CamerasPage() {
                       <MapPin className="w-3 h-3" />
                       {cam.location}
                     </div>
+                    <select
+                      value={(cam.role as CameraRole) || "surveillance"}
+                      onChange={(e) => handleChangeRole(cam.id, e.target.value as CameraRole)}
+                      className="mt-1.5 bg-slate-800/60 border border-slate-700/40 rounded-md text-[10px] text-slate-300 px-1.5 py-0.5 focus:outline-none"
+                      title="Camera role"
+                    >
+                      {CAMERA_ROLES.map((r) => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className={isRunning ? "status-led-active" : "status-led-inactive"} />
@@ -443,6 +498,31 @@ export default function CamerasPage() {
                       <p className="text-sm font-bold text-violet-400 tabular-nums mt-0.5">
                         {ss.active_tracks}
                       </p>
+                    </div>
+                  </div>
+                )}
+
+                {GATE_ROLES.includes(cam.role || "") && (
+                  <div
+                    className={cn(
+                      "mt-3 flex items-start gap-2 rounded-xl px-3 py-2 border text-[10px]",
+                      ss?.gate_ocr?.active
+                        ? "bg-emerald-500/[0.05] border-emerald-500/15 text-emerald-300"
+                        : "bg-amber-500/[0.05] border-amber-500/15 text-amber-300"
+                    )}
+                  >
+                    <ScanLine className="w-3.5 h-3.5 shrink-0 mt-px" />
+                    <div className="min-w-0">
+                      {!isRunning ? (
+                        <p>Plate OCR ready — start the stream</p>
+                      ) : ss?.gate_ocr?.active ? (
+                        <p>
+                          Plate OCR active · {ss.gate_ocr.plates_read} read / {ss.gate_ocr.vehicles_in_gate} vehicles
+                          {ss.gate_ocr.last_plate && <span className="font-mono"> · last {ss.gate_ocr.last_plate}</span>}
+                        </p>
+                      ) : (
+                        <p>Plate OCR inactive: {ss?.gate_ocr?.reason ?? "no gate polygon drawn (Scene Setup → Gate tab)"}</p>
+                      )}
                     </div>
                   </div>
                 )}

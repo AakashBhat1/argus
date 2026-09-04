@@ -52,3 +52,20 @@ def test_validate_plate_helper():
     ok, err = validate_plate("BAD")
     assert ok is False
     assert "Invalid" in err
+
+
+@pytest.mark.parametrize(
+    "text, ok",
+    [
+        ("KA01AB1234", True),   # strict Indian format
+        ("22BH1234AB", True),   # BH series: loose rule (letters + digits, >= 6)
+        ("L", False),           # OCR noise
+        ("1234", False),        # digits only
+        ("ABCDEF", False),      # letters only
+        ("ABCDEFGHIJKLM1", False),  # too long
+    ],
+)
+def test_is_plausible_plate_rejects_ocr_noise(text, ok):
+    from app.services.ocr_service import is_plausible_plate
+
+    assert is_plausible_plate(text) is ok

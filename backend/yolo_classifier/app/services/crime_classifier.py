@@ -30,10 +30,56 @@ logger = logging.getLogger(__name__)
 
 _MODEL_DOWNLOAD_FLAG = "model_downloaded.flag"
 
+_RISK_TRIGGER_LEVELS = frozenset({"suspicious", "alert", "critical"})
+
+
+def risk_trigger(tracked_obj: dict) -> bool:
+    """True when the risk engine considers this track worth a second look."""
+    if str(tracked_obj.get("risk_level", "")).lower() in _RISK_TRIGGER_LEVELS:
+        return True
+    return bool(tracked_obj.get("close_contacts"))
+
 
 def _backend_root() -> Path:
     """Return the backend/ directory."""
     return Path(__file__).resolve().parents[2]
+
+
+# transformers v4 -> v5 renamed the ViT encoder submodules. The published
+# crime-detector checkpoint uses the v4 names; map them onto whichever layout
+# the installed transformers build expects.
+_HF_VIT_V4_TO_V5 = (
+    ("vit.encoder.layer.", "vit.layers."),
+    (".attention.attention.query.", ".attention.q_proj."),
+    (".attention.attention.key.", ".attention.k_proj."),
+    (".attention.attention.value.", ".attention.v_proj."),
+    (".attention.output.dense.", ".attention.o_proj."),
+    (".intermediate.dense.", ".mlp.fc1."),
+    (".output.dense.", ".mlp.fc2."),
+)
+
+
+def _adapt_hf_vit_state_dict(state_dict: dict, target_keys: set[str]) -> dict:
+    """Rename v4-style ViT keys to the installed transformers layout if needed."""
+    if all(key in target_keys for key in state_dict):
+        return state_dict
+    renamed: dict = {}
+    for key, value in state_dict.items():
+        new_key = key
+        if key not in target_keys:
+            for old, new in _HF_VIT_V4_TO_V5:
+                new_key = new_key.replace(old, new)
+        renamed[new_key] = value
+    if any(k not in target_keys for k in renamed):
+        # Try the reverse direction (v5 checkpoint on a v4 install).
+        renamed = {}
+        for key, value in state_dict.items():
+            new_key = key
+            if key not in target_keys:
+                for old, new in _HF_VIT_V4_TO_V5:
+                    new_key = new_key.replace(new, old)
+            renamed[new_key] = value
+    return renamed
 
 
 @dataclass(frozen=True)
@@ -212,6 +258,9 @@ class CrimeClassifier:
                         num_labels=2,
                         ignore_mismatched_sizes=True,
                     )
+                    state_dict = _adapt_hf_vit_state_dict(
+                        state_dict, set(model.state_dict().keys())
+                    )
                     missing, unexpected = model.load_state_dict(
                         state_dict, strict=False
                     )
@@ -266,11 +315,17 @@ class CrimeClassifier:
         class_label: str,
         has_intrusion: bool,
         parking_activity: bool = False,
+        risk_flag: bool = False,
     ) -> bool:
-        """Check if this object should be sent to the crime classifier."""
+        """Check if this object should be sent to the crime classifier.
+
+        ``risk_flag`` is set by the risk engine when a person is already
+        suspicious (elevated score or sustained close contact with another
+        person), so the heavier classifier runs only where it can matter.
+        """
         if not self._enabled:
             return False
-        if not has_intrusion and not (
+        if not has_intrusion and not risk_flag and not (
             parking_activity and self._trigger_on_parking
         ):
             return False
@@ -347,6 +402,7 @@ class CrimeClassifier:
             class_label,
             has_intrusion,
             parking_activity=parking_activity,
+            risk_flag=risk_trigger(tracked_obj),
         ):
             return None
 
@@ -430,6 +486,7 @@ class CrimeClassifier:
                 obj.get("class_label", ""),
                 bool(obj.get("intrusion", False)),
                 parking_activity=parking_activity,
+                risk_flag=risk_trigger(obj),
             )
         ]
 

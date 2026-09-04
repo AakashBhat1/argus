@@ -37,6 +37,36 @@ class UserResponse(BaseModel):
         return iso_utc(v)
 
 
+class CameraCalibrationSchema(BaseModel):
+    """Monocular calibration used for distance estimation and ground mapping."""
+
+    hfov_deg: float = Field(default=84.0, ge=10.0, le=170.0)
+    # Four or more normalized image points (0..1) and their metric ground
+    # coordinates. Typically the corners of a parking bay or a measured
+    # rectangle on the floor.
+    homography_image_points: list[tuple[float, float]] = Field(default_factory=list, max_length=16)
+    homography_world_points: list[tuple[float, float]] = Field(default_factory=list, max_length=16)
+    class_sizes_m: dict[str, dict[str, float]] = Field(default_factory=dict)
+
+    @field_validator("homography_image_points")
+    @classmethod
+    def _validate_image_points(cls, points):
+        for x, y in points:
+            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                raise ValueError("homography_image_points must be normalized to [0, 1]")
+        return points
+
+    @field_validator("homography_world_points")
+    @classmethod
+    def _validate_world_points(cls, points, info):
+        image_points = info.data.get("homography_image_points") or []
+        if points and len(points) != len(image_points):
+            raise ValueError("homography_world_points must match homography_image_points")
+        if points and len(points) < 4:
+            raise ValueError("at least four point pairs are required for a ground homography")
+        return points
+
+
 class CameraCreate(BaseModel):
     name: str = Field(..., max_length=255)
     location: str = Field(..., max_length=500)
@@ -45,6 +75,7 @@ class CameraCreate(BaseModel):
     fps: int = 30
     role: Literal['surveillance', 'gate_entry', 'gate_exit', 'parking'] = 'surveillance'
     gate_roi: Optional[list] = None
+    calibration: Optional[CameraCalibrationSchema] = None
 
 
 class CameraUpdate(BaseModel):
@@ -56,6 +87,7 @@ class CameraUpdate(BaseModel):
     is_active: Optional[bool] = None
     role: Optional[Literal['surveillance', 'gate_entry', 'gate_exit', 'parking']] = None
     gate_roi: Optional[list] = None
+    calibration: Optional[CameraCalibrationSchema] = None
 
 
 class CameraResponse(BaseModel):
@@ -70,6 +102,7 @@ class CameraResponse(BaseModel):
     fps: int
     role: str
     gate_roi: Optional[list] = None
+    calibration: Optional[dict] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
