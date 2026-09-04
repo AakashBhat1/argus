@@ -71,3 +71,6 @@ include = ["app*"]
 [tool.pytest.ini_options]
 pythonpath = ["backend/yolo_classifier"]
 testpaths = ["backend/yolo_classifier/tests"]
+markers = [
+    "requires_model: requires local OpenVINO model weights",
+]

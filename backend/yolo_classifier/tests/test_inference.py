@@ -1,22 +1,21 @@
+"""Smoke test for inference with real OpenVINO model weights."""
+
 import numpy as np
+import pytest
+
 from app.services.detector import detector
 
-print("Loading OpenVINO detector...")
-info = detector.get_model_info()
-print(f"Device: {info['device_actual']}")
-print(f"Model: {info['model']}")
 
-# Dummy frame
-frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+@pytest.mark.requires_model
+def test_real_model_single_and_batch_inference():
+    info = detector.get_model_info()
+    assert info["device_actual"] != "unknown"
 
-print("Running single detection...")
-results = detector.detect(frame)
-print(f"Detections: {len(results)}")
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
 
-print("Running batched detection...")
-batch_results = detector.detect_batch([frame, frame])
-print(f"Batch elements: {len(batch_results)}")
-for i, res in enumerate(batch_results):
-    print(f"  Frame {i} detections: {len(res)}")
+    results = detector.detect(frame)
+    assert isinstance(results, list)
 
-print("Test complete.")
+    batch_results = detector.detect_batch([frame, frame])
+    assert len(batch_results) == 2
+    assert all(isinstance(result, list) for result in batch_results)

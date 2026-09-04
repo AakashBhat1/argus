@@ -798,4 +798,19 @@ class OpenVINODetector:
         self._compiled_model = None
 
 
-detector = OpenVINODetector()
+class _LazyOpenVINODetector:
+    """Memoise the process-wide detector without loading weights at import time."""
+
+    def __init__(self) -> None:
+        self._instance: OpenVINODetector | None = None
+
+    def initialize(self) -> OpenVINODetector:
+        if self._instance is None:
+            self._instance = OpenVINODetector()
+        return self._instance
+
+    def __getattr__(self, name: str):
+        return getattr(self.initialize(), name)
+
+
+detector = _LazyOpenVINODetector()

@@ -42,6 +42,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME}")
 
+    # Load and validate model weights during application startup, not import.
+    model_info = detector.initialize().get_model_info()
+
     # Initialize database
     await init_db()
     logger.info("Database initialized")
@@ -57,7 +60,6 @@ async def lifespan(app: FastAPI):
     await inference_pool.start()
 
     # Set device info on metrics singleton
-    model_info = detector.get_model_info()
     inference_metrics.set_device_info(
         device=model_info["device_actual"],
         model_path=model_info["model"],

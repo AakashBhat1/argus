@@ -31,7 +31,7 @@ jobs:
           python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev]"
 
       - name: Run backend tests
-        run: python -m pytest
+        run: python -m pytest -m "not requires_model"
 
       - name: Verify Alembic upgrade and downgrade
         working-directory: backend/yolo_classifier
