@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -56,3 +58,24 @@ asyncio.run(check_startup())
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_lazy_detector_initializes_once_under_concurrent_first_access(monkeypatch):
+    from app.detection import engine
+
+    instances: list[object] = []
+
+    def construct_detector():
+        time.sleep(0.02)
+        instance = object()
+        instances.append(instance)
+        return instance
+
+    monkeypatch.setattr(engine, "OpenVINODetector", construct_detector)
+    lazy_detector = engine._LazyOpenVINODetector()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(lambda _index: lazy_detector.initialize(), range(8)))
+
+    assert len(instances) == 1
+    assert all(result is instances[0] for result in results)

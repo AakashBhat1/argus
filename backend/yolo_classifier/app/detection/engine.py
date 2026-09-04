@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 import numpy as np
@@ -803,10 +804,13 @@ class _LazyOpenVINODetector:
 
     def __init__(self) -> None:
         self._instance: OpenVINODetector | None = None
+        self._initialize_lock = Lock()
 
     def initialize(self) -> OpenVINODetector:
         if self._instance is None:
-            self._instance = OpenVINODetector()
+            with self._initialize_lock:
+                if self._instance is None:
+                    self._instance = OpenVINODetector()
         return self._instance
 
     def __getattr__(self, name: str):
