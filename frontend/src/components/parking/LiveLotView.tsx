@@ -238,6 +238,7 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
   }
 
   const selectedCam = cameras.find((c) => c.id === selectedCameraId);
+  const isFallback = cameras.length > 0 && !cameras.some((c) => c.role === "parking");
 
   return (
     <div className="flex flex-col gap-3">
@@ -256,17 +257,31 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
         <div className="flex items-center gap-2">
           {/* Camera Selector */}
           {cameras.length > 0 && (
-            <select
-              value={selectedCameraId}
-              onChange={(e) => setSelectedCameraId(e.target.value)}
-              className="bg-slate-800 border border-slate-700 text-xs text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none"
-            >
-              {cameras.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.role === "parking" ? "Parking Feed" : c.location || "Camera"})
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              {isFallback && (
+                <span className="text-[10px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-md flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3 text-amber-400" />
+                  Fallback: Non-parking
+                </span>
+              )}
+              <select
+                value={selectedCameraId}
+                onChange={(e) => setSelectedCameraId(e.target.value)}
+                className={cn(
+                  "bg-slate-800 border text-xs text-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none",
+                  isFallback ? "border-amber-500/40 text-amber-200" : "border-slate-700"
+                )}
+                title={isFallback ? "Fallback: No cameras with role='parking' configured" : undefined}
+              >
+                <optgroup label={isFallback ? "Non-Parking Cameras (Fallback)" : "Parking Feeds"}>
+                  {cameras.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.role === "parking" ? "Parking Feed" : `Fallback: ${c.role || "non-parking"}${c.location ? ` · ${c.location}` : ""}`})
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
           )}
 
           {/* Map Bays Button */}
@@ -327,7 +342,7 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
       {showMapper && selectedCameraId && (
         <SlotMapper
           cameraId={selectedCameraId}
-          cameraName={selectedCam?.name || "Parking Camera"}
+          cameraName={selectedCam ? (isFallback ? `${selectedCam.name} (Non-parking fallback)` : selectedCam.name) : "Parking Camera"}
           onClose={() => setShowMapper(false)}
           onSaved={() => loadCameraData(selectedCameraId)}
         />

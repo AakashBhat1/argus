@@ -28,6 +28,7 @@ export function useWebSocket(channel: string) {
   const shouldReconnectRef = useRef(true);
 
   const connect = useCallback(() => {
+    if (!channel) return;
     if (!shouldReconnectRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
