@@ -235,3 +235,74 @@ async def test_failed_login_logs_username_and_source_ip_without_password(
     assert "audit-operator" in caplog.text
     assert "198.51.100.7" in caplog.text
     assert "password-must-not-be-logged" not in caplog.text
+
+
+def test_expired_username_and_ip_entries_are_periodically_evicted():
+    clock = FakeClock()
+    limiter = LoginAttemptLimiter(
+        username_failure_limit=5,
+        username_window_seconds=1.0,
+        base_lockout_seconds=10.0,
+        max_lockout_seconds=20.0,
+        ip_failure_limit=5,
+        ip_window_seconds=1.0,
+        clock=clock,
+        sweep_interval=4,
+    )
+
+    for index in range(100):
+        limiter.evaluate(
+            source_ip=f"198.51.100.{index}",
+            username=f"expired-{index}",
+            credentials_valid=False,
+        )
+        clock.advance(2.0)
+
+    assert len(limiter._username_states) <= 4
+    assert len(limiter._ip_failures) <= 4
+
+
+def test_recent_lockout_survives_sweeps_and_preserves_escalation_level():
+    clock = FakeClock()
+    limiter = LoginAttemptLimiter(
+        username_failure_limit=1,
+        username_window_seconds=20.0,
+        base_lockout_seconds=10.0,
+        max_lockout_seconds=20.0,
+        ip_failure_limit=100,
+        ip_window_seconds=1.0,
+        clock=clock,
+        sweep_interval=1,
+    )
+
+    limiter.evaluate(
+        source_ip="203.0.113.30",
+        username="recently-locked",
+        credentials_valid=False,
+    )
+    clock.advance(11.0)
+
+    limiter.evaluate(
+        source_ip="203.0.113.31",
+        username="successful-sweep-trigger",
+        credentials_valid=True,
+    )
+
+    retained = limiter._username_states["recently-locked"]
+    assert retained.lockout_level == 1
+
+    relocked = limiter.evaluate(
+        source_ip="203.0.113.30",
+        username="recently-locked",
+        credentials_valid=False,
+    )
+    assert relocked.reason == "username_lockout"
+    assert limiter._username_states["recently-locked"].lockout_level == 2
+
+    clock.advance(21.0)
+    limiter.evaluate(
+        source_ip="203.0.113.31",
+        username="final-sweep-trigger",
+        credentials_valid=True,
+    )
+    assert "recently-locked" not in limiter._username_states
