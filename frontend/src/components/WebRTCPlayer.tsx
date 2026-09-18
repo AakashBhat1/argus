@@ -15,9 +15,11 @@ export default function WebRTCPlayer({ cameraId, className = "" }: Props) {
 
   useEffect(() => {
     let active = true;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const startWebRTC = async () => {
       try {
+        pcRef.current?.close();
         const pc = new RTCPeerConnection();
         pcRef.current = pc;
 
@@ -49,6 +51,7 @@ export default function WebRTCPlayer({ cameraId, className = "" }: Props) {
         const answerSdp = await response.text();
         if (active) {
           await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: answerSdp }));
+          setError(null);
         }
       } catch (err: unknown) {
         if (active) {
@@ -56,7 +59,7 @@ export default function WebRTCPlayer({ cameraId, className = "" }: Props) {
             err instanceof Error ? err.message : "Failed to connect to stream"
           );
           // Retry connection after 3 seconds if stream isn't up
-          setTimeout(startWebRTC, 3000);
+          retryTimer = setTimeout(startWebRTC, 3000);
         }
       }
     };
@@ -65,6 +68,7 @@ export default function WebRTCPlayer({ cameraId, className = "" }: Props) {
 
     return () => {
       active = false;
+      if (retryTimer) clearTimeout(retryTimer);
       if (pcRef.current) {
         pcRef.current.close();
       }

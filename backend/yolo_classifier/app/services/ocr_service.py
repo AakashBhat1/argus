@@ -83,6 +83,37 @@ def is_plausible_plate(plate_text: str) -> bool:
     return any(c.isalpha() for c in text) and any(c.isdigit() for c in text)
 
 
+def select_plate_candidate(result: list) -> tuple[Optional[str], float]:
+    """Select a plausible plate from OCR lines without concatenating signage.
+
+    Vehicle crops commonly contain phone numbers and branding. Individual OCR
+    lines and adjacent line pairs are considered, with strict Indian-format
+    matches preferred over the loose international/BH-series fallback.
+    """
+    lines: list[tuple[str, float]] = []
+    for line in result or []:
+        try:
+            text = normalize_plate_text(str(line[1]))
+            confidence = float(line[2])
+        except (IndexError, TypeError, ValueError):
+            continue
+        if text:
+            lines.append((text, confidence))
+
+    candidates = list(lines)
+    candidates.extend(
+        (left + right, (left_conf + right_conf) / 2.0)
+        for (left, left_conf), (right, right_conf) in zip(lines, lines[1:])
+    )
+    plausible = [item for item in candidates if is_plausible_plate(item[0])]
+    if not plausible:
+        return None, 0.0
+    return max(
+        plausible,
+        key=lambda item: (is_valid_plate(item[0]), item[1], -len(item[0])),
+    )
+
+
 def preprocess_plate_image(img_bgr: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     enhanced = cv2.convertScaleAbs(gray, alpha=1.5, beta=10)
@@ -110,22 +141,9 @@ def recognize_plate(img_bgr: np.ndarray) -> tuple[Optional[str], str, float]:
         if not result:
             return None, "Unknown", 0.0
 
-        text = " ".join([line[1] for line in result]).strip()
-        confidence = 0.0
-        try:
-            confidences = [float(line[2]) for line in result]
-            if confidences:
-                confidence = sum(confidences) / len(confidences)
-        except (IndexError, ValueError, TypeError):
-            pass
-
-        text = "".join(c for c in text if c.isalnum() or c.isspace()).strip()
-        plate = normalize_plate_text(text)
-        if not plate:
-            return None, "Unknown", 0.0
-
-        if not is_plausible_plate(plate):
-            logger.info("OCR rejected implausible plate text %r (conf %.2f)", plate, confidence)
+        plate, confidence = select_plate_candidate(result)
+        if plate is None:
+            logger.info("OCR found no plausible plate candidate")
             return None, "Rejected", round(float(confidence), 3)
 
         if confidence < settings.PARKING_OCR_CONFIDENCE_THRESHOLD:

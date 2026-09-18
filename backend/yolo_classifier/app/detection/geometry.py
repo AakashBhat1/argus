@@ -207,7 +207,9 @@ class CameraGeometry:
 
     def is_truncated(self, bbox_x: float, bbox_y: float, bbox_w: float, bbox_h: float, margin: int = 2) -> bool:
         return (
-            bbox_y <= margin
+            bbox_x <= margin
+            or bbox_y <= margin
+            or (bbox_x + bbox_w) >= (self.width - margin)
             or (bbox_y + bbox_h) >= (self.height - margin)
         )
 
@@ -217,44 +219,34 @@ class CameraGeometry:
         el = -math.atan2(float(v) - self.cy, self.fy)
         return az, el
 
-    def approx_ground_point(self, class_label: str, bbox: tuple[float, float, float, float]) -> Optional[GroundPoint]:
-        """Ground position relative to the camera when no homography exists.
-
-        Uses pinhole range and azimuth to place the object on a flat ground
-        plane in a camera-centred frame (x right, y forward). Coarse but
-        consistent, so inter-object distances remain useful.
-        """
-        x, y, w, h = bbox
-        range_m = self.estimate_distance(class_label, w, h)
-        if range_m is None:
-            return None
-        az, _ = self.pixel_to_angles(x + w / 2.0, y + h)
-        return GroundPoint(range_m * math.sin(az), range_m * math.cos(az))
-
     def locate(self, class_label: str, bbox: tuple[float, float, float, float]) -> dict:
         """Full localisation bundle for a detection.
 
         Returns keys: ``distance_m``, ``ground_x_m``, ``ground_y_m``,
-        ``ground_source`` ('homography' | 'pinhole' | None), ``truncated``.
+        ``ground_source`` ('homography' | None), ``truncated``. Metric
+        localization is deliberately unavailable until a ground plane is
+        calibrated; bbox-height priors are too pose-sensitive for safety use.
         """
         x, y, w, h = (float(v) for v in bbox)
         foot_u = x + w / 2.0
         foot_v = y + h
-        distance = self.estimate_distance(class_label, w, h)
+        truncated = self.is_truncated(x, y, w, h)
+        distance = None
         ground: Optional[GroundPoint] = None
         source: Optional[str] = None
-        if self._homography is not None:
+        if self._homography is not None and not truncated:
             ground = self.foot_to_ground(foot_u, foot_v)
             source = "homography" if ground else None
-        if ground is None:
-            ground = self.approx_ground_point(class_label, (x, y, w, h))
-            source = "pinhole" if ground else None
+            if ground is not None:
+                # A ground-plane calibration is invariant to a person's pose,
+                # unlike the bbox-height size prior.
+                distance = math.hypot(ground.x_m, ground.y_m)
         return {
             "distance_m": round(distance, 2) if distance is not None else None,
             "ground_x_m": round(ground.x_m, 2) if ground else None,
             "ground_y_m": round(ground.y_m, 2) if ground else None,
             "ground_source": source,
-            "truncated": self.is_truncated(x, y, w, h),
+            "truncated": truncated,
         }
 
 

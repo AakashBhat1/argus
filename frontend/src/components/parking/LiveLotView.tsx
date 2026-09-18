@@ -6,6 +6,7 @@ import { api, Camera, ParkingSpace } from "@/lib/api";
 import { useWebSocket } from "@/lib/websocket";
 import SlotMapper from "./SlotMapper";
 import { cn } from "@/lib/utils";
+import WebRTCPlayer from "@/components/WebRTCPlayer";
 
 interface Point {
   x: number;
@@ -34,6 +35,8 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
 
   // Frame & Slots state
   const [currentFrame, setCurrentFrame] = useState<string | null>(null);
+  const [mediaTransport, setMediaTransport] = useState<"webrtc" | "websocket_jpeg">("websocket_jpeg");
+  const [frameSize, setFrameSize] = useState({ width: 1280, height: 720 });
   const [slotPolygons, setSlotPolygons] = useState<SlotPolygon[]>([]);
   const [occupancyMap, setOccupancyMap] = useState<Record<string, { occupied: boolean; score?: number }>>({});
 
@@ -110,6 +113,10 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
     const data = lastMessage.data || lastMessage;
 
     if (msgType === "detections") {
+      setMediaTransport(data.media_transport === "webrtc" ? "webrtc" : "websocket_jpeg");
+      if (data.frame_width && data.frame_height) {
+        setFrameSize({ width: data.frame_width, height: data.frame_height });
+      }
       // 1. Per-frame live view updates
       if (data.frame_image) {
         setCurrentFrame(data.frame_image);
@@ -138,17 +145,12 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
   // Canvas Drawing
   const drawOverlay = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !currentFrame) return;
+    if (!canvas || (!currentFrame && mediaTransport !== "webrtc")) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const img = new Image();
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
-
+    const drawSlots = () => {
       // Render slots
       slotPolygons.forEach((slot) => {
         if (slot.polygon.length < 4) return;
@@ -192,8 +194,22 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
         ctx.fillText(label, cx, cy);
       });
     };
+    if (mediaTransport === "webrtc") {
+      canvas.width = frameSize.width;
+      canvas.height = frameSize.height;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawSlots();
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      drawSlots();
+    };
     img.src = `data:image/jpeg;base64,${currentFrame}`;
-  }, [currentFrame, slotPolygons, spaces, occupancyMap]);
+  }, [currentFrame, mediaTransport, frameSize, slotPolygons, spaces, occupancyMap]);
 
   useEffect(() => {
     drawOverlay();
@@ -303,7 +319,7 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
             <Loader2 className="w-6 h-6 animate-spin" />
             <span className="text-xs">Connecting to lot stream...</span>
           </div>
-        ) : !currentFrame ? (
+        ) : !currentFrame && mediaTransport !== "webrtc" ? (
           <div className="flex flex-col items-center gap-2 text-slate-500 p-6 text-center">
             <AlertCircle className="w-8 h-8 text-slate-600" />
             <p className="text-xs text-slate-400">No snapshot available for camera</p>
@@ -317,12 +333,17 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
             )}
           </div>
         ) : (
-          <canvas
-            ref={canvasRef}
-            onClick={handleCanvasClick}
-            className="max-w-full max-h-full cursor-pointer rounded-lg shadow-2xl"
-            style={{ objectFit: "contain" }}
-          />
+          <div className="relative w-full h-full">
+            {mediaTransport === "webrtc" && selectedCameraId && (
+              <WebRTCPlayer cameraId={selectedCameraId} />
+            )}
+            <canvas
+              ref={canvasRef}
+              onClick={handleCanvasClick}
+              className="absolute inset-0 w-full h-full cursor-pointer rounded-lg"
+              style={{ objectFit: "contain" }}
+            />
+          </div>
         )}
 
         {/* Overlay Stats Tag */}

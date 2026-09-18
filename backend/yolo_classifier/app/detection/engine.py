@@ -276,6 +276,10 @@ class OpenVINODetector:
         self._compiled_model = self._compile_with_fallback(core, model)
         self._input_layer = self._compiled_model.input(0)
         self._output_layer = self._compiled_model.output(0)
+        input_shape = list(self._input_layer.shape)
+        self._supports_batch = not (
+            input_shape[0] > 0 and int(input_shape[0]) == 1
+        )
         self._validate_class_mapping()
         self._validate_model_output_shape()
         logger.info(
@@ -698,7 +702,8 @@ class OpenVINODetector:
         self._last_preprocess_ms = (time.perf_counter() - t_pre) * 1000
 
         t_infer = time.perf_counter()
-        result = self._compiled_model({self._input_layer: blob})
+        request = self._compiled_model.create_infer_request()
+        result = request.infer({self._input_layer: blob})
         output = result[self._output_layer]
         self._last_inference_ms = (time.perf_counter() - t_infer) * 1000
 
@@ -739,11 +744,13 @@ class OpenVINODetector:
         if is_static_batch:
             for i in range(len(frames)):
                 single_blob = batch_blob[i : i + 1]
-                result = self._compiled_model({self._input_layer: single_blob})
+                request = self._compiled_model.create_infer_request()
+                result = request.infer({self._input_layer: single_blob})
                 output = result[self._output_layer]
                 all_detections.append(self._postprocess(output, metas[i]))
         else:
-            result = self._compiled_model({self._input_layer: batch_blob})
+            request = self._compiled_model.create_infer_request()
+            result = request.infer({self._input_layer: batch_blob})
             output = result[self._output_layer]
             for i in range(len(frames)):
                 all_detections.append(self._postprocess(output[i : i + 1], metas[i]))
@@ -758,6 +765,11 @@ class OpenVINODetector:
             total_ms,
         )
         return all_detections
+
+    @property
+    def supports_batch(self) -> bool:
+        """Whether the compiled model accepts more than one frame per request."""
+        return self._supports_batch
 
     def _resolve_precision(self) -> str:
         if self._precision_setting:

@@ -69,3 +69,25 @@ def test_is_plausible_plate_rejects_ocr_noise(text, ok):
     from app.services.ocr_service import is_plausible_plate
 
     assert is_plausible_plate(text) is ok
+
+
+def test_ocr_candidate_selection_ignores_vehicle_phone_number():
+    from app.services.ocr_service import select_plate_candidate
+
+    result = [
+        ([[0, 0], [1, 0], [1, 1], [0, 1]], "CALL 1800-419-5555", 0.99),
+        ([[0, 0], [1, 0], [1, 1], [0, 1]], "MH12AB1234", 0.91),
+    ]
+    assert select_plate_candidate(result) == ("MH12AB1234", pytest.approx(0.91))
+
+
+def test_ocr_candidate_selection_joins_split_plate_lines():
+    from app.services.ocr_service import select_plate_candidate
+
+    result = [
+        (None, "MH 12", 0.88),
+        (None, "AB 1234", 0.92),
+    ]
+    plate, confidence = select_plate_candidate(result)
+    assert plate == "MH12AB1234"
+    assert confidence == pytest.approx(0.90)

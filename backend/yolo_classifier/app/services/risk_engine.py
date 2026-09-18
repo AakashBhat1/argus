@@ -282,8 +282,13 @@ class RiskEngine:
             ctx.spawned_from_vehicle = True
             ctx.origin_kind = "vehicle"
         else:
+            origin_x = float(obj.get("track_start_anchor_x", ax))
+            origin_y = float(obj.get("track_start_anchor_y", ay))
+            ctx.origin_anchor = (origin_x, origin_y)
             zone_types = [
-                zone_by_id[zid].zone_type for zid in obj.get("roi_zone_ids", []) if zid in zone_by_id
+                zone.zone_type
+                for zone in zone_by_id.values()
+                if zone.contains_pixel(origin_x, origin_y, frame_w, frame_h)
             ]
             ctx.origin_zone_types = zone_types
             if "entrance" in zone_types:
@@ -364,9 +369,11 @@ class RiskEngine:
             for j, b in enumerate(persons):
                 if i == j:
                     continue
-                dist = ground_distance(a, b)
-                if dist is None:
-                    dist = self._pixel_proximity(a, b)
+                calibrated = (
+                    a.get("ground_source") == "homography"
+                    and b.get("ground_source") == "homography"
+                )
+                dist = ground_distance(a, b) if calibrated else None
                 if dist is not None and dist <= threshold:
                     current.add(ids[j])
                     ctx_a.close_contact_since.setdefault(ids[j], now)

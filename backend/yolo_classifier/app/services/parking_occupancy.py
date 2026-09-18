@@ -63,7 +63,14 @@ class SlotTransition:
 
 
 class OccupancyDetector:
-    def __init__(self, *, hi: float = 0.22, lo: float = 0.10, iou_min: float = 0.40):
+    def __init__(
+        self,
+        *,
+        hi: float = 0.22,
+        lo: float = 0.10,
+        iou_min: float = 0.40,
+        texture_fallback: bool = False,
+    ):
         if not 0.0 <= lo < hi <= 1.0:
             raise ValueError('occupancy thresholds must satisfy 0 <= lo < hi <= 1')
         if not 0.0 <= iou_min <= 1.0:
@@ -71,6 +78,7 @@ class OccupancyDetector:
         self._hi = float(hi)
         self._lo = float(lo)
         self._iou_min = float(iou_min)
+        self._texture_fallback = bool(texture_fallback)
 
     @staticmethod
     def _binary_mask(frame: np.ndarray) -> np.ndarray:
@@ -128,8 +136,8 @@ class OccupancyDetector:
     ) -> list[SlotReading]:
         if not slots:
             return []
-        mask = self._binary_mask(frame)
-        height, width = mask.shape[:2]
+        height, width = frame.shape[:2]
+        mask = self._binary_mask(frame) if self._texture_fallback else None
         destination = np.array(
             [
                 [0, 0],
@@ -142,21 +150,24 @@ class OccupancyDetector:
         readings = []
         for slot in slots:
             polygon = self._pixel_polygon(slot, width, height)
-            transform = cv2.getPerspectiveTransform(polygon, destination)
-            warped = cv2.warpPerspective(mask, transform, (WARP_WIDTH, WARP_HEIGHT))
-            score = cv2.countNonZero(warped) / float(WARP_WIDTH * WARP_HEIGHT)
-            source = 'vision'
-            if score >= self._hi:
+            max_iou = max(
+                (self._detection_iou(polygon, detection) for detection in yolo_detections),
+                default=0.0,
+            )
+            if max_iou >= self._iou_min:
                 occupied = True
-            elif score <= self._lo:
+                score = max_iou
+                source = 'vision_yolo'
+            elif not self._texture_fallback:
                 occupied = False
+                score = max_iou
+                source = 'yolo'
             else:
-                occupied = any(
-                    self._detection_iou(polygon, detection) >= self._iou_min
-                    for detection in yolo_detections
-                )
-                if occupied:
-                    source = 'vision_yolo'
+                transform = cv2.getPerspectiveTransform(polygon, destination)
+                warped = cv2.warpPerspective(mask, transform, (WARP_WIDTH, WARP_HEIGHT))
+                score = cv2.countNonZero(warped) / float(WARP_WIDTH * WARP_HEIGHT)
+                source = 'vision_texture'
+                occupied = score >= self._hi
             readings.append(
                 SlotReading(
                     space_id=slot.space_id,

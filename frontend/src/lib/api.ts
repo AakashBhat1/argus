@@ -354,7 +354,7 @@ export interface DetectionOverlay {
   distance_m?: number | null;
   ground_x_m?: number | null;
   ground_y_m?: number | null;
-  ground_source?: "homography" | "pinhole" | null;
+  ground_source?: "homography" | null;
   truncated?: boolean;
   risk_score?: number;
   risk_level?: RiskLevel;
@@ -381,6 +381,7 @@ export interface FeedData {
   frame_width: number;
   frame_height: number;
   frame_image?: string;
+  media_transport?: "webrtc" | "websocket_jpeg";
   inference_ms?: number;
   is_video_source?: boolean;
   is_paused?: boolean;

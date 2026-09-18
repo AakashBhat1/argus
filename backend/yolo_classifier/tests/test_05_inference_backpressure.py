@@ -41,6 +41,28 @@ def _slow_detector(delay_s: float = 0.05):
 
 class TestInferenceBackpressure:
     @pytest.mark.asyncio
+    async def test_multiple_workers_dispatch_inference_concurrently(self):
+        detector = _slow_detector(0.15)
+        pool = InferenceWorkerPool(
+            detector,
+            num_workers=2,
+            max_batch_size=1,
+            batch_timeout_ms=1,
+            queue_max_size=8,
+        )
+        await pool.start()
+        try:
+            started = time.perf_counter()
+            await asyncio.gather(
+                pool.submit(_make_frame(), "cam-01"),
+                pool.submit(_make_frame(), "cam-02"),
+            )
+            elapsed = time.perf_counter() - started
+        finally:
+            await pool.shutdown()
+        assert elapsed < 0.27
+
+    @pytest.mark.asyncio
     async def test_submit_before_start_raises(self):
         """Submitting before pool.start() must raise RuntimeError."""
         detector = _slow_detector(0.001)

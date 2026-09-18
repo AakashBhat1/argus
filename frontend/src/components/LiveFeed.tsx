@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { api, type FeedData, type FeedMessage, type DetectionOverlay } from "@/lib/api";
 import { cn, riskHex, riskBadge, zoneTypeHex, armModeBadge } from "@/lib/utils";
+import WebRTCPlayer from "@/components/WebRTCPlayer";
 
 interface Props {
   lastMessage: FeedMessage | null;
@@ -225,7 +226,9 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
           </div>
         ) : (
           <div className="relative w-full h-full text-white">
-            {currentFeed.frame_image ? (
+            {currentFeed.media_transport === "webrtc" ? (
+              <WebRTCPlayer cameraId={currentFeed.camera_id} />
+            ) : currentFeed.frame_image ? (
               <img
                 src={`data:image/jpeg;base64,${currentFeed.frame_image}`}
                 alt="Live feed"
@@ -357,7 +360,7 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
                   <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-900/70 backdrop-blur-sm border border-slate-700/30" title={currentFeed.ground_plane_calibrated ? "Metric ground plane (homography)" : "Pinhole estimate — calibrate ground plane for metric accuracy"}>
                     <Ruler className={cn("w-3 h-3", currentFeed.ground_plane_calibrated ? "text-cyan-400" : "text-slate-500")} />
                     <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                      {currentFeed.ground_plane_calibrated ? "metric" : "pinhole"}
+                      {currentFeed.ground_plane_calibrated ? "metric" : "uncalibrated"}
                     </span>
                   </div>
                 )}

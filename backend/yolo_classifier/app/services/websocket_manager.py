@@ -17,8 +17,14 @@ class WebSocketManager:
         self._connections: dict[str, dict[str, list[WebSocket]]] = {}
         self._broadcast_log_count = 0
 
-    async def connect(self, websocket: WebSocket, channel: str = "global", tenant_id: str = "1"):
-        await websocket.accept()
+    async def connect(
+        self,
+        websocket: WebSocket,
+        channel: str = "global",
+        tenant_id: str = "1",
+        subprotocol: Optional[str] = None,
+    ):
+        await websocket.accept(subprotocol=subprotocol)
         
         # Ensure dict structures exist for tenant
         if tenant_id not in self._global_connections:

@@ -795,7 +795,7 @@ export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditor
                   <label className="text-[10px] text-slate-500 block mb-1">Horizontal FOV (degrees)</label>
                   <input type="number" className="input w-full text-xs" value={hfov} min={10} max={170} step={1} onChange={(e) => setHfov(parseFloat(e.target.value) || 84)} />
                   <p className="text-[10px] text-slate-600 mt-1">
-                    Typical: phone/webcam 60–70°, CCTV bullet 80–95°, wide dome 100–120°. Used with known object heights (person 1.7 m, car 1.5 m) for the pinhole distance estimate.
+                    Typical: phone/webcam 60–70°, CCTV bullet 80–95°, wide dome 100–120°. Metric ground distance still requires the four-point calibration below.
                   </p>
                   <button onClick={() => handleSaveCalibration(false)} disabled={saving} className="mt-2 w-full py-2 rounded-lg text-[11px] border border-slate-600/40 text-slate-300 hover:bg-slate-800/60">
                     Save FOV only
@@ -832,10 +832,10 @@ export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditor
                   {existingCal ? (
                     <>
                       <p>HFOV {existingCal.hfov_deg}°</p>
-                      <p>{existingCal.homography_image_points?.length >= 4 ? "Ground plane: calibrated (metric)" : "Ground plane: not set (pinhole estimate)"}</p>
+                      <p>{existingCal.homography_image_points?.length >= 4 ? "Ground plane: calibrated (metric)" : "Ground plane: not set (metric distance disabled)"}</p>
                     </>
                   ) : (
-                    <p>Defaults (84°, pinhole)</p>
+                    <p>Defaults (84°, uncalibrated)</p>
                   )}
                 </div>
               </div>

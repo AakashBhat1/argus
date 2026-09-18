@@ -82,7 +82,7 @@ class InferenceWorkerPool:
 
         self._queue: asyncio.Queue[InferenceRequest] = None
         self._executor: ThreadPoolExecutor = None
-        self._collector_task: Optional[asyncio.Task] = None
+        self._collector_tasks: list[asyncio.Task] = []
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -106,7 +106,10 @@ class InferenceWorkerPool:
             thread_name_prefix="ov-inference",
         )
         self._running = True
-        self._collector_task = asyncio.create_task(self._batch_collector_loop())
+        self._collector_tasks = [
+            asyncio.create_task(self._batch_collector_loop())
+            for _ in range(self._num_workers)
+        ]
         inference_metrics.update_queue_depth(0)
         inference_metrics.update_frames_dropped(0)
 
@@ -122,12 +125,11 @@ class InferenceWorkerPool:
         """Gracefully stop the worker pool."""
         self._running = False
 
-        if self._collector_task:
-            self._collector_task.cancel()
-            try:
-                await self._collector_task
-            except asyncio.CancelledError:
-                pass
+        for task in self._collector_tasks:
+            task.cancel()
+        if self._collector_tasks:
+            await asyncio.gather(*self._collector_tasks, return_exceptions=True)
+            self._collector_tasks.clear()
 
         if self._executor:
             self._executor.shutdown(wait=True)
@@ -207,7 +209,11 @@ class InferenceWorkerPool:
                 deadline = time.monotonic() + self._batch_timeout_s
 
                 # Collect frames until batch full or timeout
-                while len(batch) < self._max_batch_size:
+                detector_supports_batch = getattr(
+                    self._detector, "supports_batch", True
+                )
+                batch_limit = self._max_batch_size if detector_supports_batch else 1
+                while len(batch) < batch_limit:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break

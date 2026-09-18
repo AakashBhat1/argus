@@ -1,7 +1,9 @@
 """ViT Crime Classifier — local secondary classifier for intrusion events.
 
 Runs the Nikeytas/google-vit-best-crime-detector model locally via PyTorch
-to classify cropped person detections as 'crime' or 'normal'. Only triggered
+to reproduce its binary label on cropped person detections. A still image
+cannot establish criminal behaviour, so this component is disabled by default.
+When explicitly enabled it is triggered
 when YOLO detects a person inside an ROI zone and the dwell threshold is
 exceeded (i.e., an intrusion event fires).
 

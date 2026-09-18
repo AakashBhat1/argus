@@ -7,7 +7,7 @@
 
 model:
   # Path to OpenVINO IR model (.xml file). Relative to backend/ directory.
-  path: "models/yolo26n_int8.xml"
+  path: "models/yolov8n.xml"
 
   # Target inference device. Options:
   #   CPU   - Intel CPU (always available)

@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # -- OpenVINO Inference Settings ------------------------------------------
 
     # Path to the OpenVINO IR model (.xml). Relative to backend/ directory.
-    OPENVINO_MODEL_PATH: str = "models/yolo26n_int8.xml"
+    OPENVINO_MODEL_PATH: str = "models/yolov8n.xml"
 
     # Target device: CPU | GPU | NPU | AUTO
     # AUTO lets OpenVINO pick the best available device automatically.
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     # Model precision indicator (for logging/metrics only; actual precision
     # is determined by the converted model file).
-    OPENVINO_PRECISION: str = "INT8"
+    OPENVINO_PRECISION: str = "FP16"
 
     # Detection confidence threshold (0.0 - 1.0).
     YOLO_CONFIDENCE: float = 0.35
@@ -166,6 +166,7 @@ class Settings(BaseSettings):
 
     MAX_STREAMS: int = 20
     FRAME_SKIP: int = 6
+    DETECTION_PERSIST_INTERVAL_SEC: float = 1.0
 
     # Allow camera stream URLs that point at private/loopback/link-local IPs
     # and plain http(s) sources (e.g. DroidCam / IP Webcam on the LAN).
@@ -248,7 +249,9 @@ class Settings(BaseSettings):
     # -- ViT Crime Classifier (Local) ----------------------------------------
 
     # Enable the ViT-based crime classifier as a secondary analysis step.
-    CRIME_CLASSIFIER_ENABLED: bool = True
+    # A single still crop cannot establish criminal behaviour. This legacy
+    # appearance classifier is experimental and therefore opt-in.
+    CRIME_CLASSIFIER_ENABLED: bool = False
 
     # HuggingFace model ID for auto-download.
     CRIME_CLASSIFIER_MODEL_ID: str = "Nikeytas/google-vit-best-crime-detector"
@@ -271,7 +274,7 @@ class Settings(BaseSettings):
     # Local directory to cache the downloaded model.
     CRIME_CLASSIFIER_CACHE_DIR: str = "models/crime_classifier"
 
-    CRIME_CLASSIFIER_TRIGGER_ON_PARKING: bool = True
+    CRIME_CLASSIFIER_TRIGGER_ON_PARKING: bool = False
 
     # -- Vision parking occupancy --------------------------------------------
     PARKING_OCCUPANCY_ENABLED: bool = True
@@ -279,6 +282,7 @@ class Settings(BaseSettings):
     PARKING_OCCUPANCY_HI: float = 0.22
     PARKING_OCCUPANCY_LO: float = 0.10
     PARKING_OCCUPANCY_IOU_MIN: float = 0.40
+    PARKING_OCCUPANCY_TEXTURE_FALLBACK: bool = False
     PARKING_OCCUPANCY_DEBOUNCE_FRAMES: int = 5
 
     # -- Parking anomaly rules ------------------------------------------------

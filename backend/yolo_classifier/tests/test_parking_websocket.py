@@ -37,7 +37,9 @@ class TestParkingWebSocket:
         token = _token_for(admin_user)
         
         with pytest.raises(WebSocketDisconnect) as exc_info:
-            with client.websocket_connect(f"/ws/not-a-camera?token={token}") as ws:
+            with client.websocket_connect(
+                "/ws/not-a-camera", subprotocols=["argus-jwt", token]
+            ) as ws:
                 ws.receive()
                 
         assert exc_info.value.code == 4001
@@ -55,8 +57,12 @@ class TestParkingWebSocket:
         
         from app.services.websocket_manager import ws_manager
         
-        with client.websocket_connect(f"/ws/parking?token={token_t1}") as ws_t1:
-            with client.websocket_connect(f"/ws/parking?token={token_t2}") as ws_t2:
+        with client.websocket_connect(
+            "/ws/parking", subprotocols=["argus-jwt", token_t1]
+        ) as ws_t1:
+            with client.websocket_connect(
+                "/ws/parking", subprotocols=["argus-jwt", token_t2]
+            ) as ws_t2:
                 # 1. Trigger a broadcast for tenant-1
                 payload = {
                     "type": "parking",

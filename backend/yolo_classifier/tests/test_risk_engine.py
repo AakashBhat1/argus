@@ -112,7 +112,7 @@ def test_unauthorized_person_in_armed_restricted_zone_escalates():
     person = objs[0]
     assert person["risk_level"] in ("alert", "critical")
     assert any("armed restricted" in r for r in person["risk_reasons"])
-    assert person["distance_m"] is not None and person["distance_m"] > 0
+    assert person["distance_m"] is None
     assert len(events) >= 1
     assert events[0].intrusion is True
     assert events[0].level in ("alert", "critical")
@@ -209,12 +209,36 @@ def test_quiet_hours_and_group_size_raise_score():
     assert any("group of 3" in r for r in night_objs[0]["risk_reasons"])
 
 
-def test_close_contact_detected_from_metric_distance():
+def test_close_contact_is_not_inferred_without_ground_plane_calibration():
     h = Harness([_zone("public", armed=False)])
-    # two people ~0.5 m apart for 3 s (pixel fallback: 1.7 m / 160 px)
+    objs, _ = h.run(lambda t: [_person(1, 480, 300), _person(2, 520, 300)], [0.0, 1.0, 2.0, 3.0])
+    assert objs[0]["close_contacts"] == []
+    assert not any("close contact" in r for r in objs[0]["risk_reasons"])
+
+
+def test_close_contact_detected_from_calibrated_ground_distance():
+    h = Harness([_zone("public", armed=False)])
+    h.engine._geometry = CameraGeometry(
+        960,
+        540,
+        CameraCalibration(
+            homography_image_points=[[0, 1], [1, 1], [1, 0], [0, 0]],
+            homography_world_points=[[0, 0], [9.6, 0], [9.6, 5.4], [0, 5.4]],
+        ),
+    )
     objs, _ = h.run(lambda t: [_person(1, 480, 300), _person(2, 520, 300)], [0.0, 1.0, 2.0, 3.0])
     assert 2 in objs[0]["close_contacts"]
     assert any("close contact" in r for r in objs[0]["risk_reasons"])
+
+
+def test_origin_uses_first_unconfirmed_track_position():
+    entrance = _zone("entrance", points=[[0.0, 0.2], [0.2, 0.2], [0.2, 0.9], [0.0, 0.9]])
+    h = Harness([entrance])
+    person = _person(1, 300, 300)
+    person["track_start_anchor_x"] = 100.0
+    person["track_start_anchor_y"] = 300.0
+    objs, _ = h.run(lambda _t: [dict(person)], [0.0, 1.0])
+    assert objs[0]["origin"] == "entrance"
 
 
 def test_crime_signal_feeds_back_into_score():

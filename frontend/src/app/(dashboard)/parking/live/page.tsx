@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useWebSocket } from "@/lib/websocket";
 import ParkBotChat from "@/components/parking/ParkBotChat";
 import SecurityConsole, { type LogEntry } from "@/components/parking/SecurityConsole";
+import WebRTCPlayer from "@/components/WebRTCPlayer";
 import {
   Radio,
   Video,
@@ -252,7 +253,9 @@ export default function ParkingLivePage() {
                 </div>
               ) : (
                 <div className="relative w-full h-full">
-                  {streamFrame.frame_image ? (
+                  {streamFrame.media_transport === "webrtc" && selectedCameraId ? (
+                    <WebRTCPlayer cameraId={selectedCameraId} />
+                  ) : streamFrame.frame_image ? (
                     <img
                       src={`data:image/jpeg;base64,${streamFrame.frame_image}`}
                       alt="Live feed"

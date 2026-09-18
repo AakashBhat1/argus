@@ -31,14 +31,13 @@ def test_unknown_class_or_degenerate_box_returns_none():
     assert geom.estimate_distance("person", 10, 0.5) is None
 
 
-def test_locate_without_homography_uses_pinhole_ground_estimate():
+def test_locate_without_homography_does_not_claim_metric_ground_position():
     geom = CameraGeometry(1280, 720, CameraCalibration(hfov_deg=90.0))
-    # Centred person: azimuth 0 -> ground x ~ 0, y ~ range
     bundle = geom.locate("person", (610, 190, 60, 170))
-    assert bundle["ground_source"] == "pinhole"
-    assert bundle["distance_m"] == pytest.approx(6.4, rel=1e-2)
-    assert bundle["ground_x_m"] == pytest.approx(0.0, abs=0.05)
-    assert bundle["ground_y_m"] == pytest.approx(6.4, rel=1e-2)
+    assert bundle["ground_source"] is None
+    assert bundle["distance_m"] is None
+    assert bundle["ground_x_m"] is None
+    assert bundle["ground_y_m"] is None
     assert bundle["truncated"] is False
 
 
@@ -46,6 +45,30 @@ def test_truncated_box_flagged():
     geom = CameraGeometry(1280, 720)
     bundle = geom.locate("person", (600, 560, 60, 160))  # touches bottom edge
     assert bundle["truncated"] is True
+
+
+@pytest.mark.parametrize(
+    "bbox",
+    [(-1, 100, 60, 160), (1225, 100, 60, 160)],
+)
+def test_horizontally_truncated_box_is_flagged_and_range_suppressed(bbox):
+    geom = CameraGeometry(1280, 720)
+    bundle = geom.locate("person", bbox)
+    assert bundle["truncated"] is True
+    assert bundle["distance_m"] is None
+    assert bundle["ground_x_m"] is None
+    assert bundle["ground_y_m"] is None
+
+
+def test_homography_distance_uses_ground_position_not_bbox_height():
+    cal = CameraCalibration(
+        homography_image_points=[[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+        homography_world_points=[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+    )
+    geom = CameraGeometry(100, 100, cal)
+    upright = geom.locate("person", (45, 20, 10, 60))
+    crouched = geom.locate("person", (45, 50, 10, 30))
+    assert upright["distance_m"] == pytest.approx(crouched["distance_m"], abs=0.01)
 
 
 def test_homography_maps_calibration_rectangle_to_metres():
@@ -72,8 +95,8 @@ def test_ground_distance_between_two_objects_with_homography():
         homography_world_points=[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
     )
     geom = CameraGeometry(100, 100, cal)  # identity-ish scale: 10 px = 1 m
-    a = geom.locate("person", (10, 40, 10, 60))  # foot at (15, 100) -> (1.5, 0)
-    b = geom.locate("person", (50, 40, 10, 60))  # foot at (55, 100) -> (5.5, 0)
+    a = geom.locate("person", (10, 40, 10, 57))
+    b = geom.locate("person", (50, 40, 10, 57))
     assert a["ground_source"] == "homography"
     assert ground_distance(a, b) == pytest.approx(4.0, abs=1e-6)
 

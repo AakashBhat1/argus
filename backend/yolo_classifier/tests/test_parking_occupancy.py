@@ -85,7 +85,7 @@ def test_video_uri_rejects_parent_directory_traversal():
     assert _resolve_stream_source(unsafe) == unsafe
 
 
-def test_uniform_grey_is_free_and_checkerboard_is_occupied():
+def test_texture_alone_does_not_mark_a_slot_occupied_by_default():
     detector = OccupancyDetector()
     grey = np.full((128, 64, 3), 127, dtype=np.uint8)
     free = detector.score_slots(grey, [_slot()], [])[0]
@@ -95,9 +95,23 @@ def test_uniform_grey_is_free_and_checkerboard_is_occupied():
     checker = np.zeros((128, 64, 3), dtype=np.uint8)
     checker[::8, :] = 255
     checker[:, ::8] = 255
-    occupied = detector.score_slots(checker, [_slot()], [])[0]
-    assert occupied.occupied is True
-    assert occupied.score >= 0.22
+    reading = detector.score_slots(checker, [_slot()], [])[0]
+    assert reading.occupied is False
+    assert reading.source == 'yolo'
+
+
+def test_overlapping_vehicle_detection_marks_slot_occupied():
+    frame = np.full((128, 64, 3), 127, dtype=np.uint8)
+    car = {
+        'class_label': 'car',
+        'bbox_x': 0,
+        'bbox_y': 0,
+        'bbox_w': 64,
+        'bbox_h': 128,
+    }
+    reading = OccupancyDetector().score_slots(frame, [_slot()], [car])[0]
+    assert reading.occupied is True
+    assert reading.source == 'vision_yolo'
 
 
 def test_perspective_warp_scores_a_rotated_quad(monkeypatch):
@@ -114,14 +128,14 @@ def test_perspective_warp_scores_a_rotated_quad(monkeypatch):
         '_binary_mask',
         staticmethod(lambda _frame: mask),
     )
-    reading = OccupancyDetector().score_slots(
+    reading = OccupancyDetector(texture_fallback=True).score_slots(
         frame, [_slot(polygon=polygon)], []
     )[0]
     assert reading.occupied is True
     assert reading.score > 0.90
 
 
-def test_yolo_tiebreaker_only_changes_ambiguous_scores(monkeypatch):
+def test_yolo_detection_takes_precedence_over_texture_score(monkeypatch):
     frame = np.zeros((128, 64, 3), dtype=np.uint8)
     car = {
         'class_label': 'car',
@@ -130,7 +144,7 @@ def test_yolo_tiebreaker_only_changes_ambiguous_scores(monkeypatch):
         'bbox_w': 64,
         'bbox_h': 128,
     }
-    detector = OccupancyDetector(hi=0.22, lo=0.10, iou_min=0.40)
+    detector = OccupancyDetector(hi=0.22, lo=0.10, iou_min=0.40, texture_fallback=True)
 
     def score_for_fraction(fraction: float, detections: list[dict]):
         mask = np.zeros((128, 64), dtype=np.uint8)
@@ -146,7 +160,7 @@ def test_yolo_tiebreaker_only_changes_ambiguous_scores(monkeypatch):
     ambiguous = score_for_fraction(0.15, [car])
     assert ambiguous.occupied is True
     assert ambiguous.source == 'vision_yolo'
-    assert score_for_fraction(0.05, [car]).occupied is False
+    assert score_for_fraction(0.05, [car]).occupied is True
     assert score_for_fraction(0.30, []).occupied is True
 
 
@@ -221,7 +235,7 @@ def test_supplied_clip_hand_labelled_bays(
 ):
     frame = cv2.imread(str(FIXTURES / filename))
     assert frame is not None
-    reading = OccupancyDetector().score_slots(
+    reading = OccupancyDetector(texture_fallback=True).score_slots(
         frame, [_slot(polygon=polygon)], []
     )[0]
     assert reading.occupied is expected

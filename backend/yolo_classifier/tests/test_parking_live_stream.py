@@ -67,6 +67,12 @@ def _camera(role: str, *, suffix: str | None = None) -> Camera:
     )
 
 
+def _network_camera(role: str) -> Camera:
+    camera = _camera(role)
+    camera.stream_url = "rtsp://camera.example/live"
+    return camera
+
+
 async def _run_one_frame(stream: VideoStream, monkeypatch, frame: np.ndarray) -> None:
     monkeypatch.setattr(
         "app.services.stream_manager._open_capture",
@@ -114,10 +120,28 @@ async def test_parking_frame_broadcast_targets_camera_with_live_payload(
     payload = broadcast.await_args.args[1]
     assert payload["camera_id"] == camera.id
     assert payload["frame_image"]
+    assert payload["media_transport"] == "websocket_jpeg"
     assert len(payload["parking_slots"]) == 1
     assert {"space_id", "occupied", "score"} <= set(
         payload["parking_slots"][0]
     )
+
+
+@pytest.mark.asyncio
+async def test_network_stream_broadcasts_metadata_without_base64_frame(
+    mock_inference_pool, monkeypatch
+):
+    frame = _real_frame()
+    camera = _network_camera("surveillance")
+    stream = VideoStream(camera, mock_inference_pool)
+    stream._store_detections = AsyncMock()
+    stream._check_alerts = AsyncMock()
+
+    await _run_one_frame(stream, monkeypatch, frame)
+
+    payload = ws_manager.broadcast_detections.await_args.args[1]
+    assert payload["media_transport"] == "webrtc"
+    assert "frame_image" not in payload
 
 
 @pytest.mark.asyncio

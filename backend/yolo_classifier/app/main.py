@@ -172,7 +172,12 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
             await websocket.close(code=4001)
             return
 
-    await ws_manager.connect(websocket, channel, tenant_id=tenant_id)
+    await ws_manager.connect(
+        websocket,
+        channel,
+        tenant_id=tenant_id,
+        subprotocol="argus-jwt",
+    )
     try:
         while True:
             data = await websocket.receive_text()

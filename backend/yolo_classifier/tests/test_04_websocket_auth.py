@@ -5,7 +5,7 @@ RED: /ws/{channel} accepts any connection with zero authentication.
      Tests expect a 4001 close code when no valid token is provided.
 
 GREEN: Add token validation to the websocket_endpoint handler via
-       ?token= query parameter.
+       WebSocket subprotocol credentials.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class TestWebSocketAuthentication:
     async def test_ws_connect_with_valid_token_succeeds(
         self, app_with_db, admin_user
     ):
-        """GREEN: A valid JWT in ?token= query param must allow connection."""
+        """GREEN: A valid JWT in the subprotocol header must allow connection."""
         from starlette.testclient import TestClient
         from app.services.auth import create_access_token
         from datetime import timedelta
@@ -47,8 +47,21 @@ class TestWebSocketAuthentication:
             expires_delta=timedelta(minutes=5),
         )
         client = TestClient(app_with_db)
-        with client.websocket_connect(f"/ws/global?token={token}") as ws:
+        with client.websocket_connect(
+            "/ws/global", subprotocols=["argus-jwt", token]
+        ) as ws:
             ws.send_text("ping")
+
+    @pytest.mark.asyncio
+    async def test_ws_query_string_token_is_rejected(self, app_with_db, admin_user):
+        from starlette.testclient import TestClient
+        from app.services.auth import create_access_token
+
+        token = create_access_token(data={"sub": admin_user.username})
+        client = TestClient(app_with_db, raise_server_exceptions=False)
+        with pytest.raises(Exception):
+            with client.websocket_connect(f"/ws/global?token={token}") as ws:
+                ws.receive()
 
     @pytest.mark.asyncio
     async def test_ws_connect_with_expired_token_is_rejected(
@@ -66,7 +79,7 @@ class TestWebSocketAuthentication:
         client = TestClient(app_with_db, raise_server_exceptions=False)
         with pytest.raises(Exception):
             with client.websocket_connect(
-                f"/ws/global?token={expired_token}"
+                "/ws/global", subprotocols=["argus-jwt", expired_token]
             ) as ws:
                 ws.receive()
                 pytest.fail("Expired token should have been rejected")
@@ -80,7 +93,7 @@ class TestWebSocketAuthentication:
         client = TestClient(app_with_db, raise_server_exceptions=False)
         with pytest.raises(Exception):
             with client.websocket_connect(
-                f"/ws/global?token={bad_token}"
+                "/ws/global", subprotocols=["argus-jwt", bad_token]
             ) as ws:
                 ws.receive()
                 pytest.fail("Tampered token should have been rejected")

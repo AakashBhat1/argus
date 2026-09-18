@@ -23,6 +23,7 @@ export function useWebSocket(channel: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptRef = useRef(0);
+  const connectRef = useRef<() => void>(() => undefined);
   // Guards against zombie reconnects: closing the socket on unmount fires
   // onclose, which would otherwise schedule a new connection forever.
   const shouldReconnectRef = useRef(true);
@@ -35,7 +36,7 @@ export function useWebSocket(channel: string) {
     const token = getToken();
     if (!token) return;
 
-    const ws = new WebSocket(`${resolveWsBase()}/${channel}?token=${encodeURIComponent(token)}`);
+    const ws = new WebSocket(`${resolveWsBase()}/${channel}`, ["argus-jwt", token]);
 
     ws.onopen = () => {
       setIsConnected(true);
@@ -59,7 +60,7 @@ export function useWebSocket(channel: string) {
         RECONNECT_MAX_MS,
       );
       attemptRef.current += 1;
-      reconnectTimeout.current = setTimeout(connect, delay);
+      reconnectTimeout.current = setTimeout(() => connectRef.current(), delay);
     };
 
     ws.onerror = () => {
@@ -70,6 +71,7 @@ export function useWebSocket(channel: string) {
   }, [channel]);
 
   useEffect(() => {
+    connectRef.current = connect;
     shouldReconnectRef.current = true;
     connect();
     return () => {

@@ -85,6 +85,11 @@ def _encode_frame_to_base64(frame: np.ndarray, quality: int = 70) -> str:
     return base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
+def _mediamtx_can_pull(stream_url: str) -> bool:
+    """Return whether MediaMTX can directly proxy the configured source."""
+    return stream_url.partition(":")[0].strip().lower() in {"rtsp", "rtsps"}
+
+
 class VideoStream:
     """Manages a single camera video stream with detection and tracking."""
 
@@ -112,10 +117,15 @@ class VideoStream:
         self._fps = 0.0
         self._start_time = 0.0
         self._last_detections: list[dict] = []
+        self._last_detection_persist_at = 0.0
         self._settings = get_settings()
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
         self._reconnect_base_delay = 0.1  # seconds; exponential backoff base
+        self._uses_mediamtx = bool(
+            self._settings.MEDIAMTX_ENABLED
+            and _mediamtx_can_pull(self.stream_url)
+        )
 
         # Adaptive FPS state
         self._current_frame_skip = self._settings.FRAME_SKIP
@@ -322,8 +332,14 @@ class VideoStream:
 
                 inference_metrics.record_inference(camera_id=str(self.camera_id), latency_ms=infer_ms)
 
-                if tracked:
+                now_monotonic = time.monotonic()
+                if (
+                    tracked
+                    and now_monotonic - self._last_detection_persist_at
+                    >= float(self._settings.DETECTION_PERSIST_INTERVAL_SEC)
+                ):
                     await self._store_detections(tracked)
+                    self._last_detection_persist_at = now_monotonic
 
                 # Fire Roboflow secondary classification (non-blocking background task)
                 if tracked and roboflow_classifier.enabled:
@@ -394,8 +410,17 @@ class VideoStream:
                     "inference_ms": round(infer_ms, 1),
                     "is_video_source": self.stream_url.strip().startswith("video://"),
                     "is_paused": self._paused,
-                    "frame_image": _encode_frame_to_base64(frame, quality=60),
+                    "media_transport": (
+                        "webrtc" if self._uses_mediamtx else "websocket_jpeg"
+                    ),
                 }
+                if not self._uses_mediamtx:
+                    payload["frame_image"] = await loop.run_in_executor(
+                        None,
+                        _encode_frame_to_base64,
+                        frame,
+                        60,
+                    )
                 await ws_manager.broadcast_detections(str(self.camera_id), payload, tenant_id=self.tenant_id)
 
                 await asyncio.sleep(0.001)
@@ -808,7 +833,7 @@ class StreamManager:
             logger.error("Cannot start stream: Inference pool not initialized")
             return False
 
-        if self._settings.MEDIAMTX_ENABLED:
+        if self._settings.MEDIAMTX_ENABLED and _mediamtx_can_pull(camera.stream_url):
             # Register stream with MediaMTX for WebRTC playback.
             try:
                 import httpx

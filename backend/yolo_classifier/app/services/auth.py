@@ -79,8 +79,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 async def authenticate_websocket(websocket: WebSocket) -> Optional[User]:
-    """Authenticate an active user from a WebSocket query-string JWT."""
-    token = websocket.query_params.get("token")
+    """Authenticate an active user from a WebSocket subprotocol JWT."""
+    offered = [
+        value.strip()
+        for value in websocket.headers.get("sec-websocket-protocol", "").split(",")
+        if value.strip()
+    ]
+    token = offered[1] if len(offered) >= 2 and offered[0] == "argus-jwt" else None
     if not token:
         return None
 
