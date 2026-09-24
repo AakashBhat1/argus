@@ -23,9 +23,32 @@ from app.services.crime_classifier import crime_classifier, risk_trigger as crim
 from app.services.risk_engine import RiskEvent
 from app.services.roboflow_classifier import roboflow_classifier
 from app.services.websocket_manager import ws_manager
+from app.security.net import (
+    StreamTargetError,
+    is_network_source,
+    policy_from_settings,
+    recheck_stream_target,
+    redact_url,
+)
 from app.utils import utc_now
 
 logger = logging.getLogger(__name__)
+
+
+def video_source_roots() -> list["Path"]:
+    """Directories that ``video://<name>`` sources may resolve into.
+
+    ``VIDEO_SOURCE_DIRS`` overrides the defaults (this service's ``video/``
+    folder and the repository-root ``video/`` folder). Video files are local
+    operator data and are not committed to the repository.
+    """
+    from pathlib import Path
+
+    configured = [Path(p).expanduser() for p in get_settings().VIDEO_SOURCE_DIRS if str(p).strip()]
+    if configured:
+        return configured
+    here = Path(__file__).resolve()
+    return [here.parents[2] / 'video', here.parents[4] / 'video']
 
 
 def _resolve_stream_source(stream_url: str):
@@ -46,11 +69,7 @@ def _resolve_stream_source(stream_url: str):
         ):
             logger.warning('Rejected unsafe video:// source: %s', value)
             return value
-        candidate_roots = (
-            Path(__file__).resolve().parents[2] / 'video',
-            Path(__file__).resolve().parents[4] / 'video',
-        )
-        for root in candidate_roots:
+        for root in video_source_roots():
             candidate = (root / relative_path).resolve()
             try:
                 candidate.relative_to(root.resolve())
@@ -64,8 +83,19 @@ def _resolve_stream_source(stream_url: str):
 
 
 def _open_capture(stream_url: str) -> cv2.VideoCapture:
-    """Open a capture source for URLs, file paths, or local webcam indexes."""
+    """Open a capture source for URLs, file paths, or local webcam indexes.
+
+    Network sources are re-validated against the SSRF policy immediately
+    before connecting, so a hostname that was re-pointed at an internal
+    address after the camera was saved is still refused.
+    """
     source = _resolve_stream_source(stream_url)
+    if isinstance(source, str) and is_network_source(source):
+        try:
+            recheck_stream_target(source, policy_from_settings(get_settings()))
+        except StreamTargetError as exc:
+            logger.warning("Refusing stream source %s: %s", redact_url(source), exc)
+            return cv2.VideoCapture()
     if isinstance(source, int) and platform.system().lower() == "windows":
         return cv2.VideoCapture(source, cv2.CAP_DSHOW)
     cap = cv2.VideoCapture(source)
@@ -90,12 +120,36 @@ def _mediamtx_can_pull(stream_url: str) -> bool:
     return stream_url.partition(":")[0].strip().lower() in {"rtsp", "rtsps"}
 
 
+def mediamtx_read_url(camera_id: str, settings=None) -> str:
+    """URL the analytics pipeline reads when MediaMTX already ingests a camera.
+
+    Reading the MediaMTX path instead of the camera keeps one RTSP session per
+    camera; low-power IP cameras often cap concurrent sessions.
+    """
+    from urllib.parse import quote
+
+    settings = settings or get_settings()
+    base = settings.MEDIAMTX_RTSP_READ_BASE_URL.rstrip("/")
+    scheme, sep, rest = base.partition("://")
+    user = settings.MEDIAMTX_READ_USERNAME
+    password = settings.MEDIAMTX_READ_PASSWORD
+    if sep and user:
+        creds = quote(user, safe="")
+        if password:
+            creds += ":" + quote(password, safe="")
+        base = f"{scheme}://{creds}@{rest}"
+    return f"{base}/{quote(str(camera_id), safe='')}"
+
+
 class VideoStream:
     """Manages a single camera video stream with detection and tracking."""
 
-    def __init__(self, camera: Camera, inference_pool):
+    def __init__(self, camera: Camera, inference_pool, capture_url: Optional[str] = None):
         self.camera_id = camera.id
         self.stream_url = camera.stream_url
+        # Where frames are actually read from: the camera itself, or the
+        # MediaMTX path that is already ingesting it (single ingest).
+        self._capture_url = capture_url or camera.stream_url
         self.camera_name = camera.name
         self.tenant_id = camera.tenant_id
         self.camera_role = camera.role or 'surveillance'
@@ -150,7 +204,9 @@ class VideoStream:
                 )
 
         # Preflight validation prevents false-positive "started" responses.
-        test_cap = _open_capture(self.stream_url)
+        # Opening an RTSP source can block for seconds, so keep it off the loop.
+        loop = asyncio.get_running_loop()
+        test_cap = await loop.run_in_executor(None, _open_capture, self._capture_url)
         can_open = test_cap.isOpened()
         if test_cap:
             test_cap.release()
@@ -159,7 +215,7 @@ class VideoStream:
             logger.error(
                 "Cannot start stream '%s': invalid source %s",
                 self.camera_name,
-                self.stream_url,
+                redact_url(self._capture_url),
             )
             return False
 
@@ -195,7 +251,7 @@ class VideoStream:
     def resume(self):
         self._paused = False
         # Reopen capture and seek to saved position
-        self._cap = _open_capture(self.stream_url)
+        self._cap = _open_capture(self._capture_url)
         if self._cap and self.is_video_source and hasattr(self, "_paused_frame_pos") and self._paused_frame_pos is not None:
             self._cap.set(cv2.CAP_PROP_POS_FRAMES, self._paused_frame_pos)
         logger.info("Stream resumed: %s (%s)", self.camera_name, self.camera_id)
@@ -252,10 +308,10 @@ class VideoStream:
         bind_loop = getattr(self._pipeline, "bind_loop", None)
         if callable(bind_loop):
             bind_loop(loop)
-        self._cap = _open_capture(self.stream_url)
+        self._cap = await loop.run_in_executor(None, _open_capture, self._capture_url)
 
         if not self._cap.isOpened():
-            logger.error("Cannot open stream: %s", self.stream_url)
+            logger.error("Cannot open stream: %s", redact_url(self._capture_url))
             self._running = False
             return
 
@@ -268,7 +324,9 @@ class VideoStream:
 
                 # After resume, capture may need to be verified
                 if not self._cap or not self._cap.isOpened():
-                    self._cap = _open_capture(self.stream_url)
+                    self._cap = await loop.run_in_executor(
+                        None, _open_capture, self._capture_url
+                    )
                     if not self._cap.isOpened():
                         await asyncio.sleep(0.5)
                         continue
@@ -300,7 +358,9 @@ class VideoStream:
                     )
                     await asyncio.sleep(backoff)
                     self._cap.release()
-                    self._cap = _open_capture(self.stream_url)
+                    self._cap = await loop.run_in_executor(
+                        None, _open_capture, self._capture_url
+                    )
                     continue
 
                 self._reconnect_attempts = 0
@@ -707,6 +767,7 @@ class VideoStream:
             # Periodic cleanup of stale cooldowns
             crime_classifier.cleanup_cooldowns()
 
+            settings = self._settings
             session_factory = database.get_session_factory()
             alerts_payload: list[dict] = []
 
@@ -737,27 +798,32 @@ class VideoStream:
                             existing_meta["crime_classifier"] = cr_result.to_dict()
                             det.metadata_ = existing_meta
 
-                    # Create alert when crime is detected with sufficient confidence
+                    # A still crop cannot establish criminal behaviour, so the
+                    # classifier only feeds the risk engine (above). A
+                    # standalone alert is opt-in, low severity and worded as
+                    # something for an operator to verify.
                     if (
-                        cr_result.prediction == "crime"
+                        settings.CRIME_CLASSIFIER_STANDALONE_ALERTS
+                        and cr_result.prediction == "crime"
                         and cr_result.confidence >= crime_classifier._confidence_threshold
                     ):
                         crime_alert = Alert(
                             camera_id=self.camera_id,
                             tenant_id=self.tenant_id,
-                            type="crime_detected",
-                            severity=AlertSeverity.CRITICAL.value,
+                            type="crime_classifier_flag",
+                            severity=AlertSeverity.MEDIUM.value,
                             trigger_condition=(
-                                f"ViT crime classifier: '{cr_result.prediction}' "
-                                f"({cr_result.confidence:.0%}) on object_{cr_result.object_id}"
+                                f"Experimental appearance classifier flagged object_{cr_result.object_id} "
+                                f"({cr_result.confidence:.0%})"
                             ),
                             description=(
-                                f"Criminal activity detected on {self.camera_name}: "
-                                f"{cr_result.prediction} ({cr_result.confidence:.0%})"
+                                f"Experimental classifier flag on {self.camera_name} — "
+                                "verify the footage; this is not evidence of a crime."
                             ),
                             metadata_={
                                 "crime_classifier": cr_result.to_dict(),
                                 "source": "vit_crime_classifier",
+                                "experimental": True,
                             },
                         )
                         session.add(crime_alert)
@@ -765,9 +831,9 @@ class VideoStream:
                         alerts_payload.append({
                             "alert_id": str(crime_alert.id),
                             "camera_id": str(self.camera_id),
-                            "type": "crime_detected",
-                            "severity": AlertSeverity.CRITICAL.value,
-                            "prediction": cr_result.prediction,
+                            "type": "crime_classifier_flag",
+                            "severity": AlertSeverity.MEDIUM.value,
+                            "experimental": True,
                             "confidence": round(cr_result.confidence, 4),
                             "object_id": cr_result.object_id,
                             "inference_time_ms": round(cr_result.inference_time_ms, 1),
@@ -833,8 +899,24 @@ class StreamManager:
             logger.error("Cannot start stream: Inference pool not initialized")
             return False
 
+        if is_network_source(camera.stream_url):
+            try:
+                recheck_stream_target(camera.stream_url, policy_from_settings(self._settings))
+            except StreamTargetError as exc:
+                logger.error(
+                    "Refusing to start camera %s (%s): %s",
+                    camera.id,
+                    redact_url(camera.stream_url),
+                    exc,
+                )
+                return False
+
+        capture_url: Optional[str] = None
         if self._settings.MEDIAMTX_ENABLED and _mediamtx_can_pull(camera.stream_url):
-            # Register stream with MediaMTX for WebRTC playback.
+            # MediaMTX pulls the camera once for WebRTC playback; analytics
+            # then reads that path instead of opening a second session on
+            # the camera. If registration fails, fall back to a direct read.
+            registered = False
             try:
                 import httpx
 
@@ -846,12 +928,20 @@ class StreamManager:
                         auth=self._mediamtx_auth(),
                         json={"source": camera.stream_url},
                     )
-                    if res.status_code not in (200, 400):  # 400 means path already exists
-                        logger.warning("MediaMTX path registration failed: %s", res.text)
+                    # 400 means the path already exists.
+                    registered = res.status_code in (200, 400)
+                    if not registered:
+                        logger.warning(
+                            "MediaMTX path registration failed for camera %s: HTTP %s",
+                            camera.id,
+                            res.status_code,
+                        )
             except Exception as e:
-                logger.warning("MediaMTX API error (add path): %s", e)
+                logger.warning("MediaMTX API error (add path) for camera %s: %s", camera.id, e)
+            if registered and self._settings.MEDIAMTX_SINGLE_INGEST:
+                capture_url = mediamtx_read_url(str(camera.id), self._settings)
 
-        stream = VideoStream(camera, self._inference_pool)
+        stream = VideoStream(camera, self._inference_pool, capture_url=capture_url)
         started = await stream.start()
         if not started:
             return False

@@ -66,12 +66,12 @@ async def client_b(app_with_db, user_val10_b):
 
 
 @pytest.mark.asyncio
-async def test_val10_steps_3_4_6_slot_mapping_preview_stats(client_a):
-    # Step 3: Create camera with role='parking' and stream_url='video://istockphoto-1370353417-640_adpp_is_slower_8x.mp4'
+async def test_val10_steps_3_4_6_slot_mapping_preview_stats(client_a, sample_video):
+    # Step 3: Create camera with role='parking' and a local video:// source
     cam_data = {
         "name": "Val10 Parking Cam",
         "location": "North Lot",
-        "stream_url": "video://istockphoto-1370353417-640_adpp_is_slower_8x.mp4",
+        "stream_url": sample_video,
         "role": "parking",
         "status": "active",
         "is_active": True,
@@ -119,7 +119,7 @@ async def test_val10_steps_3_4_6_slot_mapping_preview_stats(client_a):
 @pytest.mark.asyncio
 async def test_val10_step_9_tenant_isolation(client_a, client_b):
     # Create camera on tenant A
-    cam_data = {"name": "Tenant A Cam", "location": "Lot A", "stream_url": "rtsp://test", "role": "parking", "is_active": True}
+    cam_data = {"name": "Tenant A Cam", "location": "Lot A", "stream_url": "rtsp://203.0.113.10/live", "role": "parking", "is_active": True}
     res_cam = await client_a.post("/api/v1/cameras/", json=cam_data)
     assert res_cam.status_code in (200, 201), res_cam.text
     cam_id = res_cam.json()["id"]
@@ -218,7 +218,7 @@ async def test_val10_step_10_vision_checkout(app_with_db, db_session):
 @pytest.mark.asyncio
 async def test_val10_step_11_remap_safety_409(client_a, db_session, admin_val10):
     # Create camera
-    cam_data = {"name": "Remap Safety Cam", "location": "Lot B", "stream_url": "rtsp://test", "role": "parking", "is_active": True}
+    cam_data = {"name": "Remap Safety Cam", "location": "Lot B", "stream_url": "rtsp://203.0.113.10/live", "role": "parking", "is_active": True}
     res_cam = await client_a.post("/api/v1/cameras/", json=cam_data)
     assert res_cam.status_code in (200, 201), res_cam.text
     cam_id = res_cam.json()["id"]

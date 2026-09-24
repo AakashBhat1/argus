@@ -42,6 +42,24 @@ def risk_trigger(tracked_obj: dict) -> bool:
     return bool(tracked_obj.get("close_contacts"))
 
 
+def _verify_sha256(path: Path, expected: Optional[str]) -> None:
+    """Refuse model weights whose digest does not match the pinned value."""
+    if not expected:
+        logger.warning(
+            "CRIME_CLASSIFIER_MODEL_SHA256 is not set; model weights are not integrity-checked"
+        )
+        return
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    if digest.hexdigest().lower() != expected.strip().lower():
+        path.unlink(missing_ok=True)
+        raise RuntimeError(f"Model weights at {path} failed SHA-256 verification")
+
+
 def _backend_root() -> Path:
     """Return the backend/ directory."""
     return Path(__file__).resolve().parents[2]
@@ -179,11 +197,14 @@ class CrimeClassifier:
         logger.info(
             "Downloading crime detection model: %s (first-time only)", self._model_id
         )
+        settings = get_settings()
         downloaded_path = hf_hub_download(
             repo_id=self._model_id,
             filename="model.pth",
+            revision=settings.CRIME_CLASSIFIER_MODEL_REVISION,
             cache_dir=str(self._cache_dir / "hf_cache"),
         )
+        _verify_sha256(Path(downloaded_path), settings.CRIME_CLASSIFIER_MODEL_SHA256)
 
         # Copy to a stable path for easy access
         import shutil

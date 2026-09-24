@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from threading import Lock
+from threading import Lock, local
 from typing import Optional
 
 import numpy as np
@@ -247,6 +247,12 @@ class OpenVINODetector:
         self._last_preprocess_ms = 0.0
         self._last_postprocess_ms = 0.0
         self._total_inferences = 0
+        # Several inference worker threads share one detector: timings and
+        # counters are guarded, and each thread reuses its own infer request
+        # (an InferRequest is not thread-safe, and allocating one per frame
+        # churns the heap inside the hot loop).
+        self._metrics_lock = Lock()
+        self._thread_state = local()
 
         self._load_model()
 
@@ -694,33 +700,57 @@ class OpenVINODetector:
         )
         return detections
 
+    def _infer_request(self):
+        """Return this thread's reusable infer request for the current model."""
+        state = self._thread_state
+        compiled = self._compiled_model
+        if getattr(state, "model", None) is not compiled or getattr(state, "request", None) is None:
+            state.request = compiled.create_infer_request()
+            state.model = compiled
+        return state.request
+
+    def _record_timing(
+        self, preprocess_ms: float, inference_ms: float, postprocess_ms: float
+    ) -> int:
+        with self._metrics_lock:
+            self._last_preprocess_ms = preprocess_ms
+            self._last_inference_ms = inference_ms
+            self._last_postprocess_ms = postprocess_ms
+            self._total_inferences += 1
+            return self._total_inferences
+
+    def _run(self, blob: np.ndarray) -> np.ndarray:
+        request = self._infer_request()
+        # ``infer`` copies outputs by default (share_outputs=False), so the
+        # result stays valid after this thread reuses the request.
+        result = request.infer({self._input_layer: blob})
+        return result[self._output_layer]
+
     def detect(self, frame: np.ndarray) -> list[dict]:
         t_start = time.perf_counter()
 
         t_pre = time.perf_counter()
         blob, meta = self._preprocess(frame)
-        self._last_preprocess_ms = (time.perf_counter() - t_pre) * 1000
+        preprocess_ms = (time.perf_counter() - t_pre) * 1000
 
         t_infer = time.perf_counter()
-        request = self._compiled_model.create_infer_request()
-        result = request.infer({self._input_layer: blob})
-        output = result[self._output_layer]
-        self._last_inference_ms = (time.perf_counter() - t_infer) * 1000
+        output = self._run(blob)
+        inference_ms = (time.perf_counter() - t_infer) * 1000
 
         t_post = time.perf_counter()
         detections = self._postprocess(output, meta)
-        self._last_postprocess_ms = (time.perf_counter() - t_post) * 1000
+        postprocess_ms = (time.perf_counter() - t_post) * 1000
 
-        self._total_inferences += 1
+        total = self._record_timing(preprocess_ms, inference_ms, postprocess_ms)
         total_ms = (time.perf_counter() - t_start) * 1000
-        log_fn = logger.info if self._total_inferences <= 5 else logger.debug
+        log_fn = logger.info if total <= 5 else logger.debug
         log_fn(
             "Detection: %s objects in %.1fms (pre=%.1f infer=%.1f post=%.1f) [format=%s]",
             len(detections),
             total_ms,
-            self._last_preprocess_ms,
-            self._last_inference_ms,
-            self._last_postprocess_ms,
+            preprocess_ms,
+            inference_ms,
+            postprocess_ms,
             getattr(self, "_model_format", "unknown"),
         )
         return detections
@@ -734,29 +764,32 @@ class OpenVINODetector:
         t_start = time.perf_counter()
         t_pre = time.perf_counter()
         batch_blob, metas = self._preprocess_batch(frames)
-        self._last_preprocess_ms = (time.perf_counter() - t_pre) * 1000
+        preprocess_ms = (time.perf_counter() - t_pre) * 1000
 
         all_detections: list[list[dict]] = []
         t_infer = time.perf_counter()
+        post_ms = 0.0
 
         input_shape = list(self._input_layer.shape)
         is_static_batch = input_shape[0] > 0 and input_shape[0] == 1
         if is_static_batch:
+            # A batch-1 model: run frames back-to-back on this thread's
+            # request. Parallelism comes from the worker pool's threads, which
+            # matches the LATENCY performance hint.
             for i in range(len(frames)):
-                single_blob = batch_blob[i : i + 1]
-                request = self._compiled_model.create_infer_request()
-                result = request.infer({self._input_layer: single_blob})
-                output = result[self._output_layer]
+                output = self._run(batch_blob[i : i + 1])
+                t_post = time.perf_counter()
                 all_detections.append(self._postprocess(output, metas[i]))
+                post_ms += (time.perf_counter() - t_post) * 1000
         else:
-            request = self._compiled_model.create_infer_request()
-            result = request.infer({self._input_layer: batch_blob})
-            output = result[self._output_layer]
+            output = self._run(batch_blob)
+            t_post = time.perf_counter()
             for i in range(len(frames)):
                 all_detections.append(self._postprocess(output[i : i + 1], metas[i]))
+            post_ms += (time.perf_counter() - t_post) * 1000
 
-        self._last_inference_ms = (time.perf_counter() - t_infer) * 1000
-        self._total_inferences += 1
+        inference_ms = (time.perf_counter() - t_infer) * 1000 - post_ms
+        self._record_timing(preprocess_ms, inference_ms, post_ms)
         total_ms = (time.perf_counter() - t_start) * 1000
         logger.debug(
             "Batch detection: %s objects across %s frames in %.1fms",
@@ -798,20 +831,28 @@ class OpenVINODetector:
             "allowed_classes": sorted(self._allowed_class_names),
             "allowed_class_ids": sorted(self._allowed_class_ids),
             "per_class_thresholds": dict(sorted(self._per_class_threshold.items())),
-            "total_inferences": self._total_inferences,
-            "last_inference_ms": round(self._last_inference_ms, 2),
-            "last_preprocess_ms": round(self._last_preprocess_ms, 2),
-            "last_postprocess_ms": round(self._last_postprocess_ms, 2),
+            **self._metrics_snapshot(),
         }
 
+    def _metrics_snapshot(self) -> dict:
+        with self._metrics_lock:
+            return {
+                "total_inferences": self._total_inferences,
+                "last_inference_ms": round(self._last_inference_ms, 2),
+                "last_preprocess_ms": round(self._last_preprocess_ms, 2),
+                "last_postprocess_ms": round(self._last_postprocess_ms, 2),
+            }
+
     def get_timing(self) -> dict:
+        with self._metrics_lock:
+            pre = self._last_preprocess_ms
+            infer = self._last_inference_ms
+            post = self._last_postprocess_ms
         return {
-            "inference_ms": self._last_inference_ms,
-            "preprocess_ms": self._last_preprocess_ms,
-            "postprocess_ms": self._last_postprocess_ms,
-            "total_ms": self._last_preprocess_ms
-            + self._last_inference_ms
-            + self._last_postprocess_ms,
+            "inference_ms": infer,
+            "preprocess_ms": pre,
+            "postprocess_ms": post,
+            "total_ms": pre + infer + post,
         }
 
     def shutdown(self) -> None:

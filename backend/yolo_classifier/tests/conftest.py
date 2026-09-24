@@ -1,27 +1,45 @@
-"""claude --resume a64fb31a-b875-4666-a44d-e9f701a5a1ab                                                                                                          
-Shared pytest fixtures for the yolo_classifier test suite.
+"""Shared pytest fixtures for the yolo_classifier test suite.
 
 Provides:
 - in-memory SQLite async engine + session factory
 - dependency-override helpers (get_db, get_current_active_user)
 - pre-built authenticated AsyncClient for each role
 - stub InferenceWorkerPool (no real model required)
+
+The suite is hermetic: a developer's local ``.env`` and exported shell
+settings must not change results, so dotenv loading is disabled and every
+variable that maps to an application setting is cleared before ``app`` is
+imported. Tests that need a non-default setting set it explicitly.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import uuid
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 
-import sys, os
-
-# Set safe env vars BEFORE importing app modules so auth.py validation passes
-os.environ.setdefault("SECRET_KEY", "test-secret-key-that-is-at-least-32-characters-long!")
-os.environ.setdefault("DEBUG", "true")
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+_PINNED_ENV = {
+    "ARGUS_ENV_FILE": "",
+    "SECRET_KEY": "test-secret-key-that-is-at-least-32-characters-long!",
+    "DEBUG": "true",
+}
+
+
+def _isolate_environment() -> None:
+    from app.config import Settings
+
+    for name in Settings.model_fields:
+        if name not in _PINNED_ENV:
+            os.environ.pop(name, None)
+    os.environ.update(_PINNED_ENV)
+
+
+_isolate_environment()
 
 import pytest
 import pytest_asyncio
@@ -199,3 +217,19 @@ async def auth_client(app_with_db, admin_user) -> AsyncGenerator[AsyncClient, No
         headers={"Authorization": f"Bearer {token}"},
     ) as client:
         yield client
+
+
+@pytest.fixture
+def sample_video(tmp_path, monkeypatch) -> str:
+    """A synthetic lot clip exposed as ``video://sample-lot.mp4``."""
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.dirname(__file__))
+    from support.synthetic_media import sample_clip
+
+    from app.services import stream_manager as _stream_manager
+
+    video_dir = tmp_path / "video"
+    sample_clip(video_dir / "sample-lot.mp4")
+    monkeypatch.setattr(_stream_manager, "video_source_roots", lambda: [video_dir])
+    return "video://sample-lot.mp4"

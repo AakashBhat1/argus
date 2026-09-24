@@ -7,6 +7,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "surveillance.db")
 
+
+def env_file_path() -> str | None:
+    """Return the dotenv file to load, or ``None`` to load none.
+
+    ``ARGUS_ENV_FILE`` overrides the location; an empty value disables dotenv
+    loading entirely (the test suite does this so a developer's local ``.env``
+    cannot change test outcomes). The default is anchored to this service
+    directory instead of the process working directory.
+    """
+    override = os.environ.get("ARGUS_ENV_FILE")
+    if override is not None:
+        return override.strip() or None
+    return os.path.join(BASE_DIR, ".env")
+
 DEFAULT_ALLOWED_CLASSES = [
     "person",
     "bicycle",
@@ -28,7 +42,6 @@ class Settings(BaseSettings):
 
     # pydantic-settings v2 configuration
     model_config = SettingsConfigDict(
-        env_file=".env",
         extra="ignore",
     )
 
@@ -168,10 +181,23 @@ class Settings(BaseSettings):
     FRAME_SKIP: int = 6
     DETECTION_PERSIST_INTERVAL_SEC: float = 1.0
 
-    # Allow camera stream URLs that point at private/loopback/link-local IPs
-    # and plain http(s) sources (e.g. DroidCam / IP Webcam on the LAN).
-    # Keep False in production: SSRF protection rejects such URLs.
+    # Camera source SSRF policy (see app/security/net.py).
+    # CIDRs of camera networks the server may connect to, e.g.
+    # '["192.168.10.0/24"]'. Private/loopback addresses outside these ranges
+    # are rejected; cloud metadata addresses are always rejected.
+    CAMERA_NETWORK_ALLOWLIST: list[str] = []
+    # Internal media hosts (host:port) that may resolve to container addresses.
+    STREAM_HOST_ALLOWLIST: list[str] = ["mediamtx:8554"]
+    # Permit plain http(s) camera sources (DroidCam / IP Webcam style).
+    ALLOW_HTTP_STREAMS: bool = False
+    # Deprecated: equivalent to CAMERA_NETWORK_ALLOWLIST=RFC 1918 ranges plus
+    # ALLOW_HTTP_STREAMS=true. Loopback and metadata stay blocked.
     ALLOW_PRIVATE_STREAM_URLS: bool = False
+    # Directories that video://<file> camera sources resolve into. Empty means
+    # the service's video/ folder and the repository-root video/ folder.
+    VIDEO_SOURCE_DIRS: list[str] = []
+    # Permit local capture device indexes ("0", "1") as camera sources.
+    ALLOW_LOCAL_CAPTURE_DEVICES: bool = True
 
     # -- Batching & Worker Pool -----------------------------------------------
 
@@ -216,6 +242,12 @@ class Settings(BaseSettings):
     # Optional basic-auth credentials for MediaMTX control API.
     MEDIAMTX_API_USERNAME: str | None = None
     MEDIAMTX_API_PASSWORD: str | None = None
+    # Single ingest: when MediaMTX pulls a camera, analytics reads the
+    # MediaMTX path instead of opening a second RTSP session on the camera.
+    MEDIAMTX_SINGLE_INGEST: bool = True
+    MEDIAMTX_RTSP_READ_BASE_URL: str = "rtsp://mediamtx:8554"
+    MEDIAMTX_READ_USERNAME: str | None = None
+    MEDIAMTX_READ_PASSWORD: str | None = None
 
     # -- Roboflow Secondary Classifier ----------------------------------------
 
@@ -276,6 +308,15 @@ class Settings(BaseSettings):
 
     CRIME_CLASSIFIER_TRIGGER_ON_PARKING: bool = False
 
+    # By default the classifier only nudges the risk score. Set true to also
+    # raise a MEDIUM "verify footage" alert on its own.
+    CRIME_CLASSIFIER_STANDALONE_ALERTS: bool = False
+
+    # Pin the Hugging Face download to an immutable commit and verify the
+    # weights file, so an upstream change cannot silently swap the model.
+    CRIME_CLASSIFIER_MODEL_REVISION: str | None = None
+    CRIME_CLASSIFIER_MODEL_SHA256: str | None = None
+
     # -- Vision parking occupancy --------------------------------------------
     PARKING_OCCUPANCY_ENABLED: bool = True
     PARKING_OCCUPANCY_INTERVAL_SEC: float = 2.0
@@ -283,6 +324,9 @@ class Settings(BaseSettings):
     PARKING_OCCUPANCY_LO: float = 0.10
     PARKING_OCCUPANCY_IOU_MIN: float = 0.40
     PARKING_OCCUPANCY_TEXTURE_FALLBACK: bool = False
+    # Detector classes that occupy a bay (trucks/buses are scored by how much
+    # of the bay they cover; motorcycles by how much of them is inside it).
+    PARKING_VEHICLE_CLASSES: list[str] = ["car", "truck", "bus", "motorcycle"]
     PARKING_OCCUPANCY_DEBOUNCE_FRAMES: int = 5
 
     # -- Parking anomaly rules ------------------------------------------------
@@ -339,4 +383,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings(_env_file=env_file_path())

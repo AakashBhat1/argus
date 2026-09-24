@@ -119,6 +119,7 @@ class ParkingOccupancyStage:
             lo=settings.PARKING_OCCUPANCY_LO,
             iou_min=settings.PARKING_OCCUPANCY_IOU_MIN,
             texture_fallback=settings.PARKING_OCCUPANCY_TEXTURE_FALLBACK,
+            vehicle_classes=settings.PARKING_VEHICLE_CLASSES,
         )
         self._debouncer = OccupancyDebouncer(
             settings.PARKING_OCCUPANCY_DEBOUNCE_FRAMES

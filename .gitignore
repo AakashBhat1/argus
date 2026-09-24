@@ -74,6 +74,18 @@ backend/yolo_classifier/*.safetensors
 backend/yolo_classifier/models/
 backend/yolo_classifier/intrusion_monitor/roi_events.jsonl
 
+# Local media and databases are operator data, never repository content.
+# (video:// camera sources resolve into these folders; see VIDEO_SOURCE_DIRS.)
+/video/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.mp4
+*.mkv
+*.avi
+*.mov
+
 # Chatbot service — deferred, not deployed with argus (2026-04-25).
 # Entire directory excluded from the repo. Kept locally for future re-enable.
 chatbot/

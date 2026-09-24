@@ -42,21 +42,12 @@ from app.services.parking_occupancy_service import (
 from app.services.websocket_manager import ws_manager
 from app.utils import utc_now
 
-FIXTURES = Path(__file__).parent / 'fixtures' / 'parking'
+from support import synthetic_media
+
 FULL_FRAME = np.array(
     [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     dtype=np.float32,
 )
-LOWER_LEFT_BAY = np.array(
-    [[0.0, 0.62], [1 / 13, 0.62], [1 / 13, 0.96], [0.0, 0.96]],
-    dtype=np.float32,
-)
-LOWER_SECOND_BAY = np.array(
-    [[1 / 13, 0.62], [2 / 13, 0.62], [2 / 13, 0.96], [1 / 13, 0.96]],
-    dtype=np.float32,
-)
-
-
 def _slot(space_id: str = 'P-01', polygon=FULL_FRAME) -> SlotGeometry:
     return SlotGeometry(space_id, f'db-{space_id}', np.asarray(polygon, np.float32))
 
@@ -65,8 +56,8 @@ def _reading(occupied: bool, score: float = 0.5) -> SlotReading:
     return SlotReading('P-01', occupied, score, 'vision', 'db-P-01')
 
 
-def test_video_uri_resolves_to_repo_clip_and_opens():
-    uri = 'video://istockphoto-1370353417-640_adpp_is_slower_8x.mp4'
+def test_video_uri_resolves_to_configured_clip_and_opens(sample_video):
+    uri = sample_video
     resolved = Path(_resolve_stream_source(uri))
     assert resolved.is_file()
     assert resolved.parent.name == 'video'
@@ -222,21 +213,18 @@ def test_slot_cache_conversion_and_parking_stage(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ('filename', 'polygon', 'expected', 'score_bound'),
+    ('occupied', 'bay', 'expected', 'score_bound'),
     [
-        ('frame_010.png', LOWER_LEFT_BAY, False, 0.10),
-        ('frame_065.png', LOWER_LEFT_BAY, True, 0.22),
-        ('frame_120.png', LOWER_LEFT_BAY, True, 0.22),
-        ('frame_010.png', LOWER_SECOND_BAY, True, 0.22),
+        ({1}, 0, False, 0.10),
+        ({0, 1}, 0, True, 0.22),
+        ({0}, 0, True, 0.22),
+        ({1}, 1, True, 0.22),
     ],
 )
-def test_supplied_clip_hand_labelled_bays(
-    filename, polygon, expected, score_bound
-):
-    frame = cv2.imread(str(FIXTURES / filename))
-    assert frame is not None
+def test_texture_fallback_on_synthetic_lot(occupied, bay, expected, score_bound):
+    frame = synthetic_media.parking_lot_frame(occupied, seed=7)
     reading = OccupancyDetector(texture_fallback=True).score_slots(
-        frame, [_slot(polygon=polygon)], []
+        frame, [_slot(polygon=synthetic_media.bay_polygon(bay))], []
     )[0]
     assert reading.occupied is expected
     if expected:
@@ -479,3 +467,52 @@ async def test_vision_occupy_does_not_change_gate_occupied_bay(
     assert refreshed.vehicle_id == original_vehicle_id
     assert refreshed.entry_time == original_entry
     assert refreshed.detection_source == 'manual'
+
+
+# -- multi-class vehicles (audit: trucks/buses/vans were invisible) -----------
+
+TWO_BAYS_FRAME = (200, 400, 3)
+LEFT_BAY = np.array([[0.0, 0.2], [0.5, 0.2], [0.5, 1.0], [0.0, 1.0]], dtype=np.float32)
+RIGHT_BAY = np.array([[0.5, 0.2], [1.0, 0.2], [1.0, 1.0], [0.5, 1.0]], dtype=np.float32)
+
+
+def _det(label, x, y, w, h):
+    return {'class_label': label, 'bbox_x': x, 'bbox_y': y, 'bbox_w': w, 'bbox_h': h}
+
+
+@pytest.mark.parametrize('label', ['truck', 'bus'])
+def test_large_vehicle_spanning_two_bays_occupies_both(label):
+    frame = np.zeros(TWO_BAYS_FRAME, dtype=np.uint8)
+    # A truck straddling both bays: IoU with either single bay is < 0.40.
+    truck = _det(label, 20, 0, 360, 200)
+    slots = [_slot('L', LEFT_BAY), _slot('R', RIGHT_BAY)]
+    assert OccupancyDetector._detection_iou(
+        OccupancyDetector._pixel_polygon(slots[0], 400, 200), truck
+    ) < 0.40
+    readings = OccupancyDetector().score_slots(frame, slots, [truck])
+    assert [r.occupied for r in readings] == [True, True]
+
+
+def test_motorcycle_inside_a_bay_occupies_it():
+    frame = np.zeros(TWO_BAYS_FRAME, dtype=np.uint8)
+    bike = _det('motorcycle', 60, 90, 60, 100)
+    left, right = OccupancyDetector().score_slots(
+        frame, [_slot('L', LEFT_BAY), _slot('R', RIGHT_BAY)], [bike]
+    )
+    assert left.occupied is True
+    assert right.occupied is False
+
+
+def test_non_vehicle_detections_never_occupy_a_bay():
+    frame = np.zeros(TWO_BAYS_FRAME, dtype=np.uint8)
+    person = _det('person', 0, 40, 200, 160)
+    reading = OccupancyDetector().score_slots(frame, [_slot('L', LEFT_BAY)], [person])[0]
+    assert reading.occupied is False
+
+
+def test_vehicle_classes_are_configurable():
+    frame = np.zeros(TWO_BAYS_FRAME, dtype=np.uint8)
+    truck = _det('truck', 0, 40, 200, 160)
+    cars_only = OccupancyDetector(vehicle_classes=['car'])
+    assert cars_only.score_slots(frame, [_slot('L', LEFT_BAY)], [truck])[0].occupied is False
+    assert OccupancyDetector().score_slots(frame, [_slot('L', LEFT_BAY)], [truck])[0].occupied is True

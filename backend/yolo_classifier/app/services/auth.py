@@ -16,9 +16,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.database import get_db, get_session_factory
 from app.models import User, UserRole
 
-from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+from app.config import env_file_path
+
+_env_file = env_file_path()
+if _env_file:
+    load_dotenv(_env_file)
 
 logger = logging.getLogger(__name__)
 
@@ -78,14 +82,26 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
+WS_AUTH_SUBPROTOCOL = "argus-jwt"
+
+
+def websocket_subprotocol_token(header: str) -> Optional[str]:
+    """Extract the JWT from ``Sec-WebSocket-Protocol: argus-jwt, <token>``.
+
+    The marker is located by value rather than position so an intermediary
+    that reorders the list cannot break authentication; anything other than
+    exactly the marker plus one token is rejected.
+    """
+    offered = [value.strip() for value in (header or "").split(",") if value.strip()]
+    if len(offered) != 2 or offered.count(WS_AUTH_SUBPROTOCOL) != 1:
+        return None
+    token = offered[1 - offered.index(WS_AUTH_SUBPROTOCOL)]
+    return token or None
+
+
 async def authenticate_websocket(websocket: WebSocket) -> Optional[User]:
     """Authenticate an active user from a WebSocket subprotocol JWT."""
-    offered = [
-        value.strip()
-        for value in websocket.headers.get("sec-websocket-protocol", "").split(",")
-        if value.strip()
-    ]
-    token = offered[1] if len(offered) >= 2 and offered[0] == "argus-jwt" else None
+    token = websocket_subprotocol_token(websocket.headers.get("sec-websocket-protocol", ""))
     if not token:
         return None
 

@@ -26,8 +26,9 @@ from app.services.roboflow_classifier import roboflow_classifier
 from app.services.stream_manager import VideoStream
 from app.services.websocket_manager import ws_manager
 
+from support import synthetic_media
 
-FIXTURES = Path(__file__).parent / "fixtures" / "parking"
+
 FULL_FRAME = np.array(
     [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     dtype=np.float32,
@@ -50,9 +51,7 @@ class _OneFrameCapture:
 
 
 def _real_frame() -> np.ndarray:
-    frame = cv2.imread(str(FIXTURES / "frame_065.png"))
-    assert frame is not None
-    return frame
+    return synthetic_media.parking_lot_frame({0, 1}, seed=3)
 
 
 def _camera(role: str, *, suffix: str | None = None) -> Camera:

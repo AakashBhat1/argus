@@ -85,10 +85,10 @@ class TestStreamUrlSsrfValidation:
             validate("rtsp://172.20.0.5/cam")
         assert exc_info.value.status_code == 422
 
-    def test_video_validator_and_stream_resolver_agree_on_sample_clip(self):
+    def test_video_validator_and_stream_resolver_agree_on_sample_clip(self, sample_video):
         from app.services.stream_manager import _resolve_stream_source
 
-        uri = "video://istockphoto-1370353417-640_adpp_is_slower_8x.mp4"
+        uri = sample_video
         resolved = _resolve_stream_source(uri)
         assert resolved != uri
         assert Path(resolved).is_file()

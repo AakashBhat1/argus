@@ -296,6 +296,7 @@ async def preview_camera_slots(
         hi=settings.PARKING_OCCUPANCY_HI,
         lo=settings.PARKING_OCCUPANCY_LO,
         iou_min=settings.PARKING_OCCUPANCY_IOU_MIN,
+        vehicle_classes=settings.PARKING_VEHICLE_CLASSES,
     )
     geometries = [
         SlotGeometry(

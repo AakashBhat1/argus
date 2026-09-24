@@ -97,3 +97,22 @@ class TestWebSocketAuthentication:
             ) as ws:
                 ws.receive()
                 pytest.fail("Tampered token should have been rejected")
+
+
+@pytest.mark.parametrize(
+    "header, expected",
+    [
+        ("argus-jwt, tok", "tok"),
+        ("tok, argus-jwt", "tok"),
+        ("argus-jwt,tok", "tok"),
+        ("argus-jwt", None),
+        ("tok", None),
+        ("argus-jwt, a, b", None),
+        ("argus-jwt, argus-jwt", None),
+        ("", None),
+    ],
+)
+def test_subprotocol_token_parsing(header, expected):
+    from app.services.auth import websocket_subprotocol_token
+
+    assert websocket_subprotocol_token(header) == expected

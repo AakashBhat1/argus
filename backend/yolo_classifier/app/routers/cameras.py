@@ -1,6 +1,4 @@
-import ipaddress
 from pathlib import Path
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,23 +11,11 @@ from app.models import (
     Detection, Alert, RoiEvent, AnalyticsSnapshot, Track, IntentEvent
 )
 from app.schemas import CameraCreate, CameraUpdate, CameraResponse
+from app.security.net import StreamTargetError, policy_from_settings, validate_stream_target
 from app.services.auth import get_current_active_user
 from app.services.stream_manager import _resolve_stream_source, stream_manager
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
-
-# RTSP-only by default; http(s) is opt-in via ALLOW_PRIVATE_STREAM_URLS
-# (LAN sources like DroidCam / IP Webcam stream over plain http).
-_ALLOWED_SCHEMES = {"rtsp", "rtsps"}
-_ALLOWED_SCHEMES_PERMISSIVE = {"rtsp", "rtsps", "http", "https"}
-
-_PRIVATE_NETWORKS = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("169.254.0.0/16"),
-]
 
 _VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".webm", ".flv", ".wmv", ".m4v"}
 
@@ -46,8 +32,13 @@ def _validate_stream_url(stream_url: str):
             status_code=422,
             detail="Invalid stream_url placeholder 'string'. Use webcam index (e.g. '0'), RTSP URL, or file path.",
         )
-    # Allow webcam index (e.g. "0", "1")
+    # Local capture device index (e.g. "0", "1")
     if value.isdigit():
+        if not get_settings().ALLOW_LOCAL_CAPTURE_DEVICES:
+            raise HTTPException(
+                status_code=422,
+                detail="Local capture devices are disabled (ALLOW_LOCAL_CAPTURE_DEVICES=false).",
+            )
         return
     # Allow video:// protocol — resolves to a file in the video/ folder
     if value.startswith("video://"):
@@ -70,43 +61,16 @@ def _validate_stream_url(stream_url: str):
                 detail=f"Unsupported video format '{video_path.suffix}'. Allowed: {', '.join(sorted(_VIDEO_EXTENSIONS))}",
             )
         return
-    allow_private = get_settings().ALLOW_PRIVATE_STREAM_URLS
-    allowed_schemes = _ALLOWED_SCHEMES_PERMISSIVE if allow_private else _ALLOWED_SCHEMES
-
-    parsed = urlparse(value)
-    scheme = parsed.scheme.lower()
-    if scheme and scheme not in allowed_schemes:
+    settings = get_settings()
+    if "://" not in value:
         raise HTTPException(
             status_code=422,
-            detail=(
-                f"Unsupported URL scheme '{scheme}'. "
-                f"Allowed: {', '.join(sorted(allowed_schemes))}, or video://."
-            ),
+            detail="stream_url must be an rtsp(s):// URL, a video:// file, or a webcam index.",
         )
-
-    # SSRF protection: reject stream sources that target loopback, link-local,
-    # or RFC-1918 private addresses unless explicitly allowed via config
-    # (ALLOW_PRIVATE_STREAM_URLS=true for LAN cameras such as DroidCam).
-    if not allow_private and parsed.hostname:
-        hostname = parsed.hostname.strip().lower()
-        if hostname == "localhost":
-            raise HTTPException(
-                status_code=422,
-                detail="Stream URLs targeting localhost are not allowed.",
-            )
-        try:
-            host_ip = ipaddress.ip_address(hostname)
-        except ValueError:
-            host_ip = None
-        if host_ip is not None and any(host_ip in net for net in _PRIVATE_NETWORKS):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Stream URLs targeting private/loopback/link-local addresses "
-                    "are not allowed. Set ALLOW_PRIVATE_STREAM_URLS=true to permit "
-                    "LAN camera sources."
-                ),
-            )
+    try:
+        validate_stream_target(value, policy_from_settings(settings))
+    except StreamTargetError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/", response_model=list[CameraResponse])

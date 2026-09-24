@@ -48,10 +48,13 @@ services:
       timeout: 5s
       retries: 20
 
+  # One-shot model pull. It retries on failure but never gates the backend:
+  # the ParkBot assistant reports "temporarily unavailable" until the model
+  # is present, while detection, alerts and parking keep running.
   ollama-model:
     image: ollama/ollama:latest
     container_name: intruder-ollama-model
-    restart: "no"
+    restart: "on-failure:5"
     environment:
       OLLAMA_HOST: http://ollama:11434
     entrypoint: ["/bin/sh", "-c"]
@@ -92,8 +95,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      ollama-model:
-        condition: service_completed_successfully
+      ollama:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
