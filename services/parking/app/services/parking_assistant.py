@@ -196,7 +196,6 @@ class ParkingAssistant:
     ) -> dict[str, Any]:
         """Admin path: answer and/or validate+execute structured action."""
         ctx = await self._build_context(db, tenant_id)
-        s = self._settings()
         system = COMMAND_SYSTEM.format(
             actions=", ".join(sorted(ALLOWED_ACTIONS)),
             context=ctx,

@@ -41,7 +41,7 @@ def _token_for(user: User) -> str:
 @pytest_asyncio.fixture(autouse=True)
 async def clean_parking_tables(db_session: AsyncSession):
     from sqlalchemy import delete
-    from app.models import VehicleProfile, ParkingSpace, DetectedPlate, ParkingSession, ParkingActivityLog
+    from app.models import VehicleProfile, ParkingSpace, ParkingSession
     await db_session.execute(delete(ParkingActivityLog))
     await db_session.execute(delete(ParkingSession))
     await db_session.execute(delete(DetectedPlate))
@@ -151,14 +151,14 @@ class TestParkingIntegration:
         # Using db_session directly to simulate a tenant-1 active session
         async with db_session.begin_nested():
             # Ingest tenant-1 plate
-            det_t1 = await parking_service.record_detected_plate(
+            await parking_service.record_detected_plate(
                 db_session, "tenant-1", "MH12AB1234", confidence=0.95
             )
             # Assign tenant-1 space
             await parking_service.assign_space(db_session, "tenant-1", "MH12AB1234")
 
             # Ingest tenant-2 plate
-            det_t2 = await parking_service.record_detected_plate(
+            await parking_service.record_detected_plate(
                 db_session, "tenant-2", "KA03XY9999", confidence=0.98
             )
             # Assign tenant-2 space

@@ -5,10 +5,10 @@ from datetime import datetime, timedelta, timezone
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from app.models import Camera, ParkingSpace, DetectedPlate, VehicleProfile, ParkingActivityLog
+from app.models import ParkingSpace, DetectedPlate, VehicleProfile, ParkingActivityLog
 from support.identity import User, UserRole
 from support.identity import create_access_token
-from app.services.parking_service import assign_space, release_space
+from app.services.parking_service import assign_space
 from app.services.parking_occupancy_service import apply_occupancy_tick, SlotTransition
 
 

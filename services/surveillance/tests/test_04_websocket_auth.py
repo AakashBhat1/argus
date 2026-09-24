@@ -30,7 +30,7 @@ class TestWebSocketAuthentication:
         client = TestClient(app_with_db, raise_server_exceptions=False)
         with pytest.raises(Exception):
             with client.websocket_connect("/ws/global") as ws:
-                data = ws.receive()
+                ws.receive()
                 pytest.fail("WebSocket accepted unauthenticated connection")
 
     @pytest.mark.asyncio

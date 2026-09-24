@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import logging
 import time
 from typing import Optional
@@ -29,7 +28,7 @@ from argus_vision.sources import (
     mediamtx_can_pull as _mediamtx_can_pull,
     mediamtx_read_url,
     open_capture as _open_capture,
-    resolve_stream_source as _resolve_stream_source,
+    resolve_stream_source as _resolve_stream_source,  # noqa: F401  (re-exported for callers and tests)
 )
 from app.utils import utc_now
 

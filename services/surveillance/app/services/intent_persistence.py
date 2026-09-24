@@ -11,9 +11,8 @@ import logging
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
-import psycopg2
 from psycopg2.extras import Json
 from psycopg2.pool import ThreadedConnectionPool
 

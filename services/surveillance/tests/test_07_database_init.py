@@ -35,7 +35,6 @@ class TestDatabaseInit:
         monkeypatch.setenv("ALLOW_DB_FALLBACK", "false")
 
         # Temporarily make DATABASE_URL look like postgres so is_already_sqlite is False
-        original_url = db_module.DATABASE_URL
         monkeypatch.setattr(db_module, "DATABASE_URL", "postgresql+asyncpg://user:pass@unreachable:5432/db")
 
         mock_engine = MagicMock()
@@ -60,7 +59,6 @@ class TestDatabaseInit:
         """GREEN: When ALLOW_DB_FALLBACK=true, SQLite fallback is permitted."""
         monkeypatch.setenv("ALLOW_DB_FALLBACK", "true")
 
-        original_url = db_module.DATABASE_URL
         monkeypatch.setattr(db_module, "DATABASE_URL", "postgresql+asyncpg://user:pass@unreachable:5432/db")
 
         mock_engine = MagicMock()

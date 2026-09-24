@@ -286,7 +286,6 @@ async def test_committed_transition_updates_only_ingesting_tenant(
     monkeypatch.setattr(ws_manager, 'broadcast_to_channel', broadcast)
     monkeypatch.setattr(ws_manager, 'broadcast_alert', AsyncMock())
 
-    from app.services.parking_occupancy import SlotTransition
 
     transition = SlotTransition(
         space_id='P-01',

@@ -18,7 +18,7 @@ from argus_vision.intent import IntentResult, classify_intent
 from app.services.intent_persistence import save_track_and_intent
 from app.services.risk_engine import RiskEngine, RiskEvent
 from argus_vision.tracker import MultiObjectTracker
-from argus_vision.trajectory import TrajectoryAccumulator, TrajectoryFeatures
+from argus_vision.trajectory import TrajectoryAccumulator
 from app.utils import utc_now
 
 logger = logging.getLogger(__name__)

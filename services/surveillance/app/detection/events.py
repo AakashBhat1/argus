@@ -13,7 +13,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import psycopg2
 from psycopg2.extras import Json
 from psycopg2.pool import ThreadedConnectionPool
 

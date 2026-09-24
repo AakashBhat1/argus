@@ -1,6 +1,5 @@
 import asyncio
 import httpx
-import uvicorn
 import subprocess
 import time
 

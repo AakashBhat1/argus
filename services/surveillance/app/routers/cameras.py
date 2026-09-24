@@ -1,20 +1,18 @@
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
-from app.config import get_settings
 from app.database import get_db
 from app.models import (
-    Camera, CameraStatus, User,
+    Camera, User,
     Detection, Alert, RoiEvent, AnalyticsSnapshot, Track, IntentEvent
 )
 from app.schemas import CameraCreate, CameraUpdate, CameraResponse
 from argus_vision.sources import SourceError, validate_camera_source
 from app.services.auth import get_current_active_user, require_admin
 from argus_common.net import MaskedCredentialsError, restore_masked_credentials
-from app.services.stream_manager import _resolve_stream_source, stream_manager
+from app.services.stream_manager import stream_manager
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 

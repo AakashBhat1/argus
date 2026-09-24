@@ -1,6 +1,4 @@
 import uuid
-from datetime import datetime
-from typing import Optional
 from sqlalchemy import (
     Column, String, Float, Integer, DateTime, ForeignKey,
     Boolean, Text, Index, JSON,

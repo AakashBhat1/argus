@@ -1,19 +1,16 @@
 import asyncio
 import base64
 import logging
-import platform
-from pathlib import Path
 
 import cv2
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import get_db
 from app.models import Camera, CameraStatus, User
-from app.services.stream_manager import stream_manager, _resolve_stream_source, _open_capture
+from app.services.stream_manager import stream_manager, _open_capture
 from app.services.auth import get_current_active_user, require_admin
 from argus_common.web_auth import CsrfError, check_playback_request
 

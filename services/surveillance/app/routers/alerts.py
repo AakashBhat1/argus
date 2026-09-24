@@ -4,7 +4,7 @@ from sqlalchemy import select, func
 from typing import Optional
 
 from app.database import get_db
-from app.models import Alert, AlertStatus, AlertSeverity, User
+from app.models import Alert, AlertStatus, User
 from app.schemas import AlertCreate, AlertUpdate, AlertResponse
 from app.services.auth import get_current_active_user
 from app.utils import utc_now

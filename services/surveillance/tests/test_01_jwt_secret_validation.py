@@ -11,7 +11,6 @@ GREEN: Add startup validation that raises RuntimeError when SECRET_KEY
 
 from __future__ import annotations
 
-import os
 import sys
 
 import pytest

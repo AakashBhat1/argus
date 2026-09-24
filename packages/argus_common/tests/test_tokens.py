@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-import jwt
 import pytest
 
 from argus_common.keys import SigningKey, jwks, load_signing_key, public_keys_from_jwks, KeyConfigError

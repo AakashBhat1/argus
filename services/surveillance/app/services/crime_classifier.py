@@ -268,7 +268,7 @@ class CrimeClassifier:
 
                 if is_hf_layout:
                     try:
-                        from transformers import ViTForImageClassification
+                        from transformers import ViTConfig, ViTForImageClassification
                     except ImportError as imp_err:
                         raise RuntimeError(
                             "Crime classifier checkpoint is a HuggingFace "
@@ -277,11 +277,10 @@ class CrimeClassifier:
                             "pip install transformers"
                         ) from imp_err
 
-                    model = ViTForImageClassification.from_pretrained(
-                        "google/vit-base-patch16-224",
-                        num_labels=2,
-                        ignore_mismatched_sizes=True,
-                    )
+                    # The architecture of google/vit-base-patch16-224 (ViTConfig's
+                    # defaults), built locally: every weight comes from the
+                    # checkpoint above, so nothing is downloaded at runtime.
+                    model = ViTForImageClassification(ViTConfig(num_labels=2))
                     state_dict = _adapt_hf_vit_state_dict(
                         state_dict, set(model.state_dict().keys())
                     )

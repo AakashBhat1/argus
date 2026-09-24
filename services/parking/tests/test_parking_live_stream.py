@@ -8,7 +8,6 @@ import uuid
 from unittest.mock import AsyncMock
 
 import numpy as np
-import pytest
 
 from app.models import Camera, ParkingSpace
 from app.services.parking_occupancy import SlotGeometry, SlotTransition
