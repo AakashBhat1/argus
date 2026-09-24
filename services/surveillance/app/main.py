@@ -187,12 +187,13 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
             await websocket.close(code=WS_AUTH_CLOSE_CODE)
             return
 
-    await ws_manager.connect(
+    if not await ws_manager.connect(
         websocket,
         channel,
         tenant_id=tenant_id,
         subprotocol=auth.subprotocol,
-    )
+    ):
+        return
     try:
         await hold_until_expiry(websocket, auth.expires_at)
     except WebSocketDisconnect:

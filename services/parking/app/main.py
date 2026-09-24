@@ -113,7 +113,8 @@ async def _serve_channel(websocket: WebSocket, channel: str) -> None:
         if camera is None:
             await websocket.close(code=WS_AUTH_CLOSE_CODE)
             return
-    await ws_manager.connect(websocket, channel, tenant_id=principal.tenant_id, subprotocol=auth.subprotocol)
+    if not await ws_manager.connect(websocket, channel, tenant_id=principal.tenant_id, subprotocol=auth.subprotocol):
+        return
     try:
         await hold_until_expiry(websocket, auth.expires_at)
     except WebSocketDisconnect:
