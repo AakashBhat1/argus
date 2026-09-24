@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import {
   X, Save, Trash2, Undo2, MousePointer, Loader2, Pentagon, Ruler, Shield, Clock, Check, ScanLine,
 } from "lucide-react";
-import { api, GATE_ROLES, type Zone, type ZoneType, type ArmedSchedule, type CameraCalibration, type CameraRole } from "@/lib/api";
+import { api, GATE_ROLES, type Zone, type ZoneType, type ArmedSchedule, type CameraCalibration, type CameraRole, type CameraService } from "@/lib/api";
 import { cn, zoneTypeHex } from "@/lib/utils";
 
 interface Point {
@@ -15,6 +15,8 @@ interface Point {
 interface ZoneEditorProps {
   cameraId: string;
   cameraName: string;
+  /** Surveillance cameras have zones; parking-service cameras have a gate. */
+  service?: CameraService;
   onClose: () => void;
 }
 
@@ -49,12 +51,13 @@ function rgba(color: number[], alpha: number): string {
   return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
 }
 
-export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditorProps) {
+export default function ZoneEditor({ cameraId, cameraName, service = "surveillance", onClose }: ZoneEditorProps) {
+  const tabs: Tab[] = service === "parking" ? ["gate", "calibration"] : ["zones", "calibration"];
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const loadedSnapshotRef = useRef<string | null>(null);
 
-  const [tab, setTab] = useState<Tab>("zones");
+  const [tab, setTab] = useState<Tab>(service === "parking" ? "gate" : "zones");
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -96,9 +99,9 @@ export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditor
     setError(null);
     try {
       const [snap, zoneList, cam] = await Promise.all([
-        api.streams.snapshot(cameraId),
-        api.zones.list(cameraId),
-        api.cameras.get(cameraId),
+        api.streams.snapshot(cameraId, service),
+        service === "surveillance" ? api.zones.list(cameraId) : Promise.resolve([] as Zone[]),
+        api.cameras.get(cameraId, service),
       ]);
       setSnapshot(snap.image);
       setZones(zoneList);
@@ -357,7 +360,7 @@ export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditor
     setError(null);
     try {
       const gate_roi = gatePoints.map((p) => [Math.round(p.x * 10000) / 10000, Math.round(p.y * 10000) / 10000]);
-      const cam = await api.cameras.update(cameraId, { role: gateRole, gate_roi });
+      const cam = await api.cameras.update(cameraId, { role: gateRole, gate_roi }, service);
       setSavedGate(gatePoints);
       setGatePoints([]);
       setGateDrawing(false);
@@ -374,7 +377,7 @@ export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditor
     setSaving(true);
     setError(null);
     try {
-      await api.cameras.update(cameraId, { gate_roi: null });
+      await api.cameras.update(cameraId, { gate_roi: null }, service);
       setSavedGate([]);
       setGatePoints([]);
       setGateDrawing(false);
@@ -390,7 +393,7 @@ export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditor
     setSaving(true);
     setError(null);
     try {
-      const cam = await api.cameras.update(cameraId, { role });
+      const cam = await api.cameras.update(cameraId, { role }, service);
       setCameraRole((cam.role as CameraRole) || role);
       if (role === "gate_entry" || role === "gate_exit") setGateRole(role);
       setNotice(`Camera role set to ${role.replace("_", " ")}`);
@@ -462,7 +465,7 @@ export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditor
             ? [[0, 0], [rectWidth, 0], [rectWidth, rectLength], [0, rectLength]]
             : [],
       };
-      const cam = await api.cameras.update(cameraId, { calibration });
+      const cam = await api.cameras.update(cameraId, { calibration }, service);
       setExistingCal(cam.calibration ?? calibration);
       setNotice(withHomography && calPoints.length === 4 ? "Ground plane calibrated — distances are now metric" : "Field of view saved");
     } catch (e) {
@@ -496,7 +499,7 @@ export default function ZoneEditor({ cameraId, cameraName, onClose }: ZoneEditor
               <p className="text-[10px] text-slate-500">{cameraName}</p>
             </div>
             <div className="ml-4 flex items-center gap-1 bg-slate-800/50 rounded-lg p-0.5">
-              {(["zones", "gate", "calibration"] as Tab[]).map((t) => (
+              {tabs.map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}

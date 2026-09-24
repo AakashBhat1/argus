@@ -67,7 +67,7 @@ export default function ParkingLivePage() {
         setIsAdmin(profile.role === "admin");
 
         // Get cameras
-        const camList = await api.cameras.list(true);
+        const camList = (await api.cameras.list(true)).filter((c) => c.service === "parking");
         if (cancelled) return;
         // Gate cameras are the ones with a gate role (that is what makes OCR
         // fire). Fall back to name/location matching for legacy setups.
@@ -110,7 +110,7 @@ export default function ParkingLivePage() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const st = await api.streams.cameraStatus(selectedCameraId);
+        const st = await api.streams.cameraStatus(selectedCameraId, "parking");
         if (cancelled) return;
         setStreamRunning(!!st?.is_running);
         setOcrStatus(st?.gate_ocr ?? null);
@@ -128,8 +128,9 @@ export default function ParkingLivePage() {
     };
   }, [selectedCameraId]);
 
-  // Global channel: detection metadata (and JPEG frames for local files).
-  const handleGlobalMessage = useCallback((message: FeedMessage) => {
+  // Selected gate camera's channel: detection metadata (and JPEG frames for
+  // local files), served by the parking service.
+  const handleCameraMessage = useCallback((message: FeedMessage) => {
     if (message.type === "detections" && message.data?.camera_id === selectedCameraId) {
       setStreamFrame(message.data);
     }
@@ -168,7 +169,10 @@ export default function ParkingLivePage() {
   }, [addLog]);
 
   const { isConnected: isParkingConnected } = useWebSocket("parking", handleParkingMessage);
-  const { isConnected: isGlobalConnected } = useWebSocket("global", handleGlobalMessage);
+  const { isConnected: isCameraConnected } = useWebSocket(
+    selectedCameraId ? `parking/${selectedCameraId}` : null,
+    handleCameraMessage,
+  );
 
   const handleCommandExecuted = useCallback(async (command: Record<string, any>) => {
     addLog("success", `Command executed successfully: ${JSON.stringify(command)}`);
@@ -192,9 +196,9 @@ export default function ParkingLivePage() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 text-[11px] bg-slate-900/60 border border-slate-700/30 rounded-xl px-3.5 py-2 backdrop-blur-sm">
-            <span className={isGlobalConnected ? "status-led-active" : "status-led-error"} />
-            <span className={isGlobalConnected ? "text-emerald-400 font-medium" : "text-red-400"}>
-              {isGlobalConnected ? "Global Video Live" : "Video Offline"}
+            <span className={isCameraConnected ? "status-led-active" : "status-led-error"} />
+            <span className={isCameraConnected ? "text-emerald-400 font-medium" : "text-red-400"}>
+              {isCameraConnected ? "Gate Video Live" : "Video Offline"}
             </span>
           </div>
           <div className="flex items-center gap-2 text-[11px] bg-slate-900/60 border border-slate-700/30 rounded-xl px-3.5 py-2 backdrop-blur-sm">
@@ -247,7 +251,7 @@ export default function ParkingLivePage() {
               ) : (
                 <div className="relative w-full h-full">
                   {streamFrame.media_transport === "webrtc" && selectedCameraId ? (
-                    <WebRTCPlayer cameraId={selectedCameraId} />
+                    <WebRTCPlayer cameraId={selectedCameraId} service="parking" />
                   ) : streamFrame.frame_image ? (
                     // eslint-disable-next-line @next/next/no-img-element -- live base64 JPEG frames; next/image optimisation does not apply
                     <img

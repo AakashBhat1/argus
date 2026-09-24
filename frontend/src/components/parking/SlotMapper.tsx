@@ -73,7 +73,7 @@ export default function SlotMapper({ cameraId, cameraName, onClose, onSaved }: S
   // Load snapshot & existing slots for the camera.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.streams.snapshot(cameraId), api.parking.slots(cameraId)])
+    Promise.all([api.streams.snapshot(cameraId, "parking"), api.parking.slots(cameraId)])
       .then(([snap, slotList]) => {
         if (cancelled) return;
         setSnapshot(snap.image);

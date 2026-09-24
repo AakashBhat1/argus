@@ -80,6 +80,7 @@ app.add_middleware(
 )
 
 app.include_router(cameras.router, prefix="/api/v1")
+app.include_router(cameras.streams_router, prefix="/api/v1")
 app.include_router(parking.router, prefix="/api/v1")
 app.include_router(parking_chat.router, prefix="/api/v1")
 app.include_router(internal.router)

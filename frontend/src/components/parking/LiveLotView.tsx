@@ -51,10 +51,12 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
       .list()
       .then((camList) => {
         if (cancelled) return;
-        // Prefer cameras with role === 'parking'; fall back to any active camera.
-        let parkingCams = camList.filter((c) => (c.status === "active" || c.is_active) && c.role === "parking");
+        // Lot cameras belong to the parking service; prefer role === 'parking'
+        // and fall back to any active parking-service camera.
+        const serviceCams = camList.filter((c) => c.service === "parking");
+        let parkingCams = serviceCams.filter((c) => (c.status === "active" || c.is_active) && c.role === "parking");
         if (parkingCams.length === 0) {
-          parkingCams = camList.filter((c) => c.status === "active" || c.is_active);
+          parkingCams = serviceCams.filter((c) => c.status === "active" || c.is_active);
         }
         setCameras(parkingCams);
         if (parkingCams.length > 0) setSelectedCameraId(parkingCams[0].id);
@@ -77,7 +79,7 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
     if (!selectedCameraId) return;
     let cancelled = false;
     Promise.all([
-      api.streams.snapshot(selectedCameraId).catch(() => null),
+      api.streams.snapshot(selectedCameraId, "parking").catch(() => null),
       api.parking.slots(selectedCameraId).catch(() => []),
     ])
       .then(([snap, slotsList]) => {
@@ -123,7 +125,7 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
       mergeSlots(data.slots || data.parking_slots);
     }
   }, []);
-  useWebSocket(selectedCameraId || null, handleCameraMessage);
+  useWebSocket(selectedCameraId ? `parking/${selectedCameraId}` : null, handleCameraMessage);
 
   // Canvas Drawing
   const drawOverlay = useCallback(() => {
@@ -323,7 +325,7 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
         ) : (
           <div className="relative w-full h-full">
             {mediaTransport === "webrtc" && selectedCameraId && (
-              <WebRTCPlayer cameraId={selectedCameraId} />
+              <WebRTCPlayer cameraId={selectedCameraId} service="parking" />
             )}
             <canvas
               ref={canvasRef}

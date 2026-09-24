@@ -67,6 +67,7 @@ class ParkingStream:
             self._settings.MEDIAMTX_ENABLED and _mediamtx_can_pull(self.stream_url)
         )
         self._frame_skip = max(1, int(self._settings.FRAME_SKIP))
+        self._last_track_count = 0
 
     @property
     def is_running(self) -> bool:
@@ -172,6 +173,7 @@ class ParkingStream:
         result: ParkingFrameResult = await loop.run_in_executor(
             None, self._pipeline.process, detections, frame, utc_now()
         )
+        self._last_track_count = len(result.tracked_objects)
         elapsed = time.time() - self._start_time
         self._fps = self._frame_count / elapsed if elapsed > 0 else 0.0
 
@@ -206,14 +208,20 @@ class ParkingStream:
         )
 
     def status(self) -> dict:
+        # Same shape as the surveillance stream status the dashboard renders.
         return {
             "camera_id": self.camera_id,
             "camera_name": self.camera_name,
+            "service": "parking",
             "role": self.role,
             "is_running": self._running,
-            "fps": round(self._fps, 1),
-            "frames": self._frame_count,
+            "is_paused": False,
             "is_video_source": self.is_video_source,
+            "fps": round(self._fps, 1),
+            "frame_count": self._frame_count,
+            "active_tracks": self._last_track_count,
+            "uptime_seconds": round(time.time() - self._start_time, 1) if self._running else 0,
+            "current_frame_skip": self._frame_skip,
             "media_transport": "webrtc" if self._uses_mediamtx else "websocket_jpeg",
             "gate_ocr": self._pipeline.gate_ocr_status(),
         }
@@ -310,8 +318,12 @@ class ParkingStreamManager:
         stream.update_gate(role, gate_roi)
         return True
 
-    def get_all_status(self) -> list[dict]:
-        return [stream.status() for stream in self._streams.values()]
+    def get_all_status(self, tenant_id: Optional[str] = None) -> list[dict]:
+        return [
+            stream.status()
+            for stream in self._streams.values()
+            if tenant_id is None or stream.tenant_id == tenant_id
+        ]
 
 
 stream_manager = ParkingStreamManager()

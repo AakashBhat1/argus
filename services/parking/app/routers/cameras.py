@@ -19,6 +19,13 @@ from app.services.stream_manager import stream_manager
 from argus_vision.sources import SourceError, open_capture, validate_camera_source
 
 router = APIRouter(prefix="/parking/cameras", tags=["parking-cameras"])
+streams_router = APIRouter(prefix="/parking/streams", tags=["parking-cameras"])
+
+
+@streams_router.get("/status")
+async def all_stream_status(current_user: Principal = Depends(get_current_active_user)):
+    """Running parking streams for the caller's tenant."""
+    return {"streams": stream_manager.get_all_status(tenant_id=current_user.tenant_id)}
 
 
 def _validate_source(stream_url: str) -> None:

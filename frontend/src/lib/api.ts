@@ -5,7 +5,12 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v
 /** Default request timeout in milliseconds. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
-async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
+interface FetchBehaviour {
+  /** Do not bounce to /login on 401 (optional peer services, e.g. parking). */
+  noAuthRedirect?: boolean;
+}
+
+async function fetchApi<T>(endpoint: string, options?: RequestInit, behaviour?: FetchBehaviour): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -26,7 +31,12 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
       signal: options?.signal ?? controller.signal,
     });
 
-    if (res.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+    if (
+      res.status === 401 &&
+      !behaviour?.noAuthRedirect &&
+      typeof window !== "undefined" &&
+      !window.location.pathname.startsWith("/login")
+    ) {
       window.location.href = "/login";
     }
 
@@ -47,7 +57,14 @@ export interface CameraCalibration {
   homography_image_points: number[][];
   homography_world_points: number[][];
   class_sizes_m?: Record<string, Record<string, number>>;
+  /** Measured mounting height (m); optional. */
+  camera_height_m?: number | null;
+  /** Measured camera ground position [x, y] (m) in the calibration frame; optional. */
+  camera_ground_position_m?: number[] | null;
 }
+
+/** Which backend owns a camera: surveillance cameras vs gate/lot cameras. */
+export type CameraService = "surveillance" | "parking";
 
 export interface Camera {
   id: string;
@@ -61,6 +78,7 @@ export interface Camera {
   role?: CameraRole | string;
   gate_roi?: number[][] | null;
   calibration?: CameraCalibration | null;
+  service?: CameraService;
   created_at: string;
   updated_at: string;
 }
@@ -75,6 +93,18 @@ export const CAMERA_ROLES: { value: CameraRole; label: string; hint: string }[] 
 ];
 
 export const GATE_ROLES: readonly string[] = ["gate_entry", "gate_exit"];
+export const PARKING_ROLES: readonly string[] = ["gate_entry", "gate_exit", "parking"];
+
+/** Gate and lot cameras live in the parking service; the rest in surveillance. */
+export function cameraService(camera: { service?: string; role?: string | null }): CameraService {
+  if (camera.service === "parking" || camera.service === "surveillance") return camera.service;
+  return PARKING_ROLES.includes(camera.role || "") ? "parking" : "surveillance";
+}
+
+/** Roles a camera can switch between without moving to another service. */
+export function rolesForService(service: CameraService): typeof CAMERA_ROLES {
+  return CAMERA_ROLES.filter((r) => (service === "parking") === PARKING_ROLES.includes(r.value));
+}
 
 export type ZoneType = "restricted" | "perimeter" | "entrance" | "driveway" | "parking" | "public";
 
@@ -469,15 +499,35 @@ export const api = {
     me: () => fetchApi<{ id: string; username: string; role: string; tenant_id: string; is_active: boolean }>("/auth/users/me"),
   },
   cameras: {
-    list: (activeOnly = false) =>
-      fetchApi<Camera[]>(`/cameras/?active_only=${activeOnly}`),
-    get: (id: string) => fetchApi<Camera>(`/cameras/${id}`),
+    /** Cameras from both services; parking is optional (may be undeployed). */
+    list: async (activeOnly = false): Promise<Camera[]> => {
+      const [surveillance, parking] = await Promise.all([
+        fetchApi<Camera[]>(`/cameras/?active_only=${activeOnly}`),
+        fetchApi<Camera[]>(`/parking/cameras?active_only=${activeOnly}`, undefined, { noAuthRedirect: true }).catch(
+          () => [] as Camera[],
+        ),
+      ]);
+      return [
+        ...surveillance.map((c) => ({ ...c, service: "surveillance" as const })),
+        ...parking.map((c) => ({ ...c, service: "parking" as const })),
+      ];
+    },
+    get: (id: string, service: CameraService = "surveillance") =>
+      service === "parking"
+        ? fetchApi<Camera>(`/parking/cameras/${id}`).then((c) => ({ ...c, service }))
+        : fetchApi<Camera>(`/cameras/${id}`).then((c) => ({ ...c, service })),
     create: (data: Partial<Camera>) =>
-      fetchApi<Camera>("/cameras/", { method: "POST", body: JSON.stringify(data) }),
-    update: (id: string, data: Partial<Camera>) =>
-      fetchApi<Camera>(`/cameras/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-    delete: (id: string) =>
-      fetchApi<void>(`/cameras/${id}`, { method: "DELETE" }),
+      cameraService(data) === "parking"
+        ? fetchApi<Camera>("/parking/cameras", { method: "POST", body: JSON.stringify(data) })
+        : fetchApi<Camera>("/cameras/", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: Partial<Camera>, service: CameraService = "surveillance") =>
+      service === "parking"
+        ? fetchApi<Camera>(`/parking/cameras/${id}`, { method: "PUT", body: JSON.stringify(data) })
+        : fetchApi<Camera>(`/cameras/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: string, service: CameraService = "surveillance") =>
+      service === "parking"
+        ? fetchApi<void>(`/parking/cameras/${id}`, { method: "DELETE" })
+        : fetchApi<void>(`/cameras/${id}`, { method: "DELETE" }),
   },
 
   detections: {
@@ -521,23 +571,39 @@ export const api = {
   },
 
   streams: {
-    start: (cameraId: string) =>
-      fetchApi<{ status: string }>(`/streams/${cameraId}/start`, { method: "POST" }),
-    stop: (cameraId: string) =>
-      fetchApi<{ status: string }>(`/streams/${cameraId}/stop`, { method: "POST" }),
-    status: () =>
-      fetchApi<{ streams: StreamStatus[] }>("/streams/status"),
-    /** Per-camera status; 404s when the stream is not running. */
-    cameraStatus: (cameraId: string) =>
-      fetchApi<StreamStatus>(`/streams/${cameraId}/status`),
+    start: (cameraId: string, service: CameraService = "surveillance") =>
+      service === "parking"
+        ? fetchApi<{ status: string }>(`/parking/cameras/${cameraId}/start`, { method: "POST" })
+        : fetchApi<{ status: string }>(`/streams/${cameraId}/start`, { method: "POST" }),
+    stop: (cameraId: string, service: CameraService = "surveillance") =>
+      service === "parking"
+        ? fetchApi<{ status: string }>(`/parking/cameras/${cameraId}/stop`, { method: "POST" })
+        : fetchApi<{ status: string }>(`/streams/${cameraId}/stop`, { method: "POST" }),
+    /** Running streams of both services. */
+    status: async () => {
+      const [surveillance, parking] = await Promise.all([
+        fetchApi<{ streams: StreamStatus[] }>("/streams/status"),
+        fetchApi<{ streams: StreamStatus[] }>("/parking/streams/status", undefined, { noAuthRedirect: true }).catch(
+          () => ({ streams: [] as StreamStatus[] }),
+        ),
+      ]);
+      return { streams: [...surveillance.streams, ...parking.streams] };
+    },
+    /** Per-camera status; 404s when a surveillance stream is not running. */
+    cameraStatus: (cameraId: string, service: CameraService = "surveillance") =>
+      service === "parking"
+        ? fetchApi<StreamStatus>(`/parking/cameras/${cameraId}/status`)
+        : fetchApi<StreamStatus>(`/streams/${cameraId}/status`),
     stopAll: () =>
       fetchApi<{ status: string }>("/streams/stop-all", { method: "POST" }),
     pause: (cameraId: string) =>
       fetchApi<{ status: string }>(`/streams/${cameraId}/pause`, { method: "POST" }),
     resume: (cameraId: string) =>
       fetchApi<{ status: string }>(`/streams/${cameraId}/resume`, { method: "POST" }),
-    snapshot: (cameraId: string) =>
-      fetchApi<{ camera_id: string; image: string; width: number; height: number }>(`/streams/${cameraId}/snapshot`),
+    snapshot: (cameraId: string, service: CameraService = "surveillance") =>
+      service === "parking"
+        ? fetchApi<{ camera_id: string; image: string; width: number; height: number }>(`/parking/cameras/${cameraId}/snapshot`)
+        : fetchApi<{ camera_id: string; image: string; width: number; height: number }>(`/streams/${cameraId}/snapshot`),
   },
 
   zones: {

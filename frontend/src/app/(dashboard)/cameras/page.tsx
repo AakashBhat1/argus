@@ -17,7 +17,7 @@ import {
   Pentagon,
   ScanLine,
 } from "lucide-react";
-import { api, CAMERA_ROLES, GATE_ROLES, type Camera as CameraType, type CameraRole, type StreamStatus } from "@/lib/api";
+import { api, CAMERA_ROLES, GATE_ROLES, cameraService, rolesForService, type Camera as CameraType, type CameraRole, type StreamStatus } from "@/lib/api";
 import { cn, statusColor } from "@/lib/utils";
 import ZoneEditor from "@/components/ZoneEditor";
 
@@ -149,9 +149,9 @@ export default function CamerasPage() {
     }
   }
 
-  async function handleChangeRole(id: string, role: CameraRole) {
+  async function handleChangeRole(camera: CameraType, role: CameraRole) {
     try {
-      await api.cameras.update(id, { role });
+      await api.cameras.update(camera.id, { role }, cameraService(camera));
       loadCameras();
       loadStreamStatus();
     } catch (err) {
@@ -159,22 +159,23 @@ export default function CamerasPage() {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(camera: CameraType) {
     if (!confirm("Delete this camera?")) return;
     try {
-      await api.cameras.delete(id);
+      await api.cameras.delete(camera.id, cameraService(camera));
       loadCameras();
     } catch (err) {
       console.error("Failed to delete camera:", err);
     }
   }
 
-  async function handleToggleStream(id: string, isRunning: boolean) {
+  async function handleToggleStream(camera: CameraType, isRunning: boolean) {
     try {
+      const service = cameraService(camera);
       if (isRunning) {
-        await api.streams.stop(id);
+        await api.streams.stop(camera.id, service);
       } else {
-        await api.streams.start(id);
+        await api.streams.start(camera.id, service);
       }
       loadStreamStatus();
       loadCameras();
@@ -462,14 +463,19 @@ export default function CamerasPage() {
                     </div>
                     <select
                       value={(cam.role as CameraRole) || "surveillance"}
-                      onChange={(e) => handleChangeRole(cam.id, e.target.value as CameraRole)}
+                      onChange={(e) => handleChangeRole(cam, e.target.value as CameraRole)}
                       className="mt-1.5 bg-slate-800/60 border border-slate-700/40 rounded-md text-[10px] text-slate-300 px-1.5 py-0.5 focus:outline-none"
-                      title="Camera role"
+                      title={cameraService(cam) === "parking" ? "Parking-service camera role" : "Surveillance camera"}
+                      disabled={rolesForService(cameraService(cam)).length < 2}
                     >
-                      {CAMERA_ROLES.map((r) => (
+                      {/* A role change never moves a camera between services. */}
+                      {rolesForService(cameraService(cam)).map((r) => (
                         <option key={r.value} value={r.value}>{r.label}</option>
                       ))}
                     </select>
+                    <span className="ml-1.5 text-[9px] uppercase tracking-wider text-slate-500">
+                      {cameraService(cam)}
+                    </span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className={isRunning ? "status-led-active" : "status-led-inactive"} />
@@ -529,7 +535,7 @@ export default function CamerasPage() {
 
                 <div className="mt-4 flex items-center gap-2">
                   <button
-                    onClick={() => handleToggleStream(cam.id, isRunning)}
+                    onClick={() => handleToggleStream(cam, isRunning)}
                     className={cn(
                       "flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-medium transition-all duration-200",
                       isRunning
@@ -557,7 +563,7 @@ export default function CamerasPage() {
                     <Pentagon className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => handleDelete(cam.id)}
+                    onClick={() => handleDelete(cam)}
                     className="p-2.5 rounded-xl text-slate-600 hover:text-red-400 hover:bg-red-500/[0.06] transition-all duration-200"
                     aria-label="Delete camera"
                   >
@@ -586,6 +592,7 @@ export default function CamerasPage() {
         <ZoneEditor
           cameraId={zoneEditorCamera.id}
           cameraName={zoneEditorCamera.name}
+          service={cameraService(zoneEditorCamera)}
           onClose={() => setZoneEditorCamera(null)}
         />
       )}

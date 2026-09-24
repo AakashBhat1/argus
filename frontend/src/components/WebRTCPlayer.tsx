@@ -5,10 +5,16 @@ import { Video } from "lucide-react";
 
 interface Props {
   cameraId: string;
+  /** Which service's media server carries this camera. */
+  service?: "surveillance" | "parking";
   className?: string;
 }
 
-export default function WebRTCPlayer({ cameraId, className = "" }: Props) {
+const SURVEILLANCE_MEDIA_BASE = process.env.NEXT_PUBLIC_MEDIAMTX_URL || "http://localhost:8889";
+// Gate/lot cameras are ingested by the parking host's own MediaMTX.
+const PARKING_MEDIA_BASE = process.env.NEXT_PUBLIC_PARKING_MEDIAMTX_URL || SURVEILLANCE_MEDIA_BASE;
+
+export default function WebRTCPlayer({ cameraId, service = "surveillance", className = "" }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +41,7 @@ export default function WebRTCPlayer({ cameraId, className = "" }: Props) {
         await pc.setLocalDescription(offer);
 
         // MediaMTX WHEP endpoint (path uses camera_id, not camera_name)
-        const base = process.env.NEXT_PUBLIC_MEDIAMTX_URL || "http://localhost:8889";
+        const base = service === "parking" ? PARKING_MEDIA_BASE : SURVEILLANCE_MEDIA_BASE;
         const response = await fetch(`${base.replace(/\/$/, "")}/${cameraId}/whep`, {
           method: "POST",
           headers: {
@@ -73,7 +79,7 @@ export default function WebRTCPlayer({ cameraId, className = "" }: Props) {
         pcRef.current.close();
       }
     };
-  }, [cameraId]);
+  }, [cameraId, service]);
 
   return (
     <div className={`relative bg-black w-full h-full overflow-hidden ${className}`}>

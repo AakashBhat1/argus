@@ -3,15 +3,20 @@ import { getToken } from "./auth";
 import type { FeedMessage } from "./api";
 
 const WS_ENV = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws";
+// Parking channels ("parking", "parking/<cameraId>") are served by the
+// parking service. Behind the gateway both share the same origin and path
+// prefix, so this only differs in local development without the gateway.
+const PARKING_WS_ENV = process.env.NEXT_PUBLIC_PARKING_WS_URL || WS_ENV;
 
 /** A path-only base (e.g. "/ws", used behind the nginx proxy) must be
  *  resolved against the page origin at connect time, picking wss: on
  *  https pages. The WebSocket constructor needs an absolute ws/wss URL. */
-function resolveWsBase(): string {
-  if (!WS_ENV.startsWith("/")) return WS_ENV;
-  if (typeof window === "undefined") return WS_ENV;
+function resolveWsBase(channel: string): string {
+  const base = channel === "parking" || channel.startsWith("parking/") ? PARKING_WS_ENV : WS_ENV;
+  if (!base.startsWith("/")) return base;
+  if (typeof window === "undefined") return base;
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${window.location.host}${WS_ENV}`;
+  return `${scheme}://${window.location.host}${base}`;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -50,7 +55,7 @@ export function useWebSocket(
     const token = getToken();
     if (!token) return;
 
-    const ws = new WebSocket(`${resolveWsBase()}/${channel}`, ["argus-jwt", token]);
+    const ws = new WebSocket(`${resolveWsBase(channel)}/${channel}`, ["argus-jwt", token]);
 
     ws.onopen = () => {
       setIsConnected(true);

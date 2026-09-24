@@ -76,6 +76,7 @@ class CameraResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    service: Literal["surveillance"] = "surveillance"
 
     @field_serializer("created_at", "updated_at")
     def _ser_dt(self, v: datetime) -> str:
