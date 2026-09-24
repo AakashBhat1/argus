@@ -1,57 +1,45 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Root-level .dockerignore
-# This file applies when the Docker build context is the project root,
-# which is the case for the backend service in docker-compose.yml.
-# ─────────────────────────────────────────────────────────────────────────────
+# Build context is the repository root for every service image; each
+# Dockerfile copies only what it needs, and this keeps secrets, data and
+# bulky artifacts out of the context entirely.
 
-# ── Frontend (not needed in the backend image) ────────────────────────────────
+# VCS / IDE
+.git
+.github
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Frontend has its own build context
 frontend/
-frontend/.next
-frontend/node_modules
-frontend/out
-frontend/build
 
-# ── Chatbot (built separately with its own context) ───────────────────────────
-chatbot/
-
-# ── Documentation ─────────────────────────────────────────────────────────────
+# Docs and plans
 docs/
-*.md
-!backend/yolo_classifier/**/*.md
+plans/
+info_about_handover_to_other_ai_tools.md
 
-# ── Python caches ─────────────────────────────────────────────────────────────
-__pycache__
-*.pyc
-*.pyo
-.pytest_cache
-.mypy_cache
-.coverage
-htmlcov
-
-# ── Virtual environments ──────────────────────────────────────────────────────
+# Python caches and environments
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
 .venv
 venv
 env
 
-# ── Local env and DB files ────────────────────────────────────────────────────
-.env
-.env.*
-!backend/yolo_classifier/.env.example
-*.db
-surveillance.db
-
-# ── Model files (mounted as a volume at runtime) ──────────────────────────────
-backend/yolo_classifier/models
-
-# ── Generated data files (mounted as a volume at runtime) ────────────────────
-backend/yolo_classifier/intrusion_monitor/roi_events.jsonl
-
-# ── Git and IDE ───────────────────────────────────────────────────────────────
-.git
-.gitignore
-.gitattributes
-.idea
-.vscode
-*.swp
-*.swo
-.DS_Store
+# Secrets, local state, media and models (mounted at runtime)
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.pem
+**/*.key
+deploy/pki/out/
+video/
+services/*/video/
+services/*/models/
+services/*/data/
+services/*/intrusion_monitor/roi_events.jsonl

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus-common"
+version = "0.2.0"
+description = "Security and service-to-service primitives shared by Argus services."
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["argus_common*"]

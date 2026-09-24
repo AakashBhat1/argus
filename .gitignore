@@ -57,22 +57,22 @@ a.out
 frontend/.next/
 frontend/.turbo/
 
-# Backend runtime and model artifacts
-backend/**/.env
-backend/**/.env.*
-!backend/**/.env.example
-
-backend/yolo_classifier/*.db
-backend/yolo_classifier/*.db-*
-backend/yolo_classifier/*.sqlite
-backend/yolo_classifier/*.sqlite-*
-backend/yolo_classifier/video/
-backend/yolo_classifier/*.pt
-backend/yolo_classifier/*.onnx
-backend/yolo_classifier/*.pth
-backend/yolo_classifier/*.safetensors
-backend/yolo_classifier/models/
-backend/yolo_classifier/intrusion_monitor/roi_events.jsonl
+# Service runtime state, secrets and model artifacts
+services/**/.env
+services/**/.env.*
+!services/**/.env.example
+services/*/video/
+services/*/models/
+services/*/*.pt
+services/*/*.onnx
+services/*/*.pth
+services/*/*.safetensors
+services/*/intrusion_monitor/roi_events.jsonl
+services/*/data/
+# Generated PKI material and service keys (deploy/pki.sh)
+deploy/pki/out/
+*.pem
+*.key
 
 # Local media and databases are operator data, never repository content.
 # (video:// camera sources resolve into these folders; see VIDEO_SOURCE_DIRS.)

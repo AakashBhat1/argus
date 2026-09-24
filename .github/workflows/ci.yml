@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-services:
+    name: ${{ matrix.service }} tests + migrations
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [surveillance]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    env:
+      # Tests pin their own settings; this proves no .env is required.
+      ARGUS_ENV_FILE: ""
+      DEBUG: "true"
+      SECRET_KEY: "ci-only-secret-key-that-is-at-least-32-characters"
+      DATABASE_URL: "sqlite+aiosqlite:///./ci_migrations.db"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            packages/*/pyproject.toml
+            services/*/pyproject.toml
+
+      - name: Install service and shared packages
+        working-directory: .
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+            -e packages/argus_common -e packages/argus_vision \
+            -e "services/${{ matrix.service }}[dev]"
+
+      - name: Run tests
+        run: python -m pytest -m "not requires_model"
+
+      - name: Verify Alembic upgrade and downgrade
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint -- --max-warnings=0
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"

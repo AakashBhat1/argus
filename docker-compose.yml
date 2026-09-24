@@ -67,14 +67,14 @@ services:
   backend:
     build:
       context: .
-      dockerfile: backend/yolo_classifier/Dockerfile
+      dockerfile: services/surveillance/Dockerfile
     container_name: intruder-backend
     restart: unless-stopped
     ports:
       # Localhost-only: the internet reaches the API through nginx (80/443).
       - "127.0.0.1:8000:8000"
     env_file:
-      - backend/yolo_classifier/.env
+      - services/surveillance/.env
     environment:
       PYTHONUNBUFFERED: "1"
       # Use Postgres in Docker (db service)
@@ -89,9 +89,9 @@ services:
       PARKING_OLLAMA_MODEL: ${PARKING_OLLAMA_MODEL:-qwen3:0.6b}
     volumes:
       # Backend writes roi_events.jsonl here; chatbot reads from the same volume
-      - roi_events_data:/app/backend/yolo_classifier/intrusion_monitor
+      - roi_events_data:/app/services/surveillance/intrusion_monitor
       # Mount model files at runtime (avoids baking large binaries into the image)
-      - models_data:/app/backend/yolo_classifier/models
+      - models_data:/app/services/surveillance/models
     depends_on:
       db:
         condition: service_healthy

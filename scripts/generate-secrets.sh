@@ -2,7 +2,7 @@
 # Generate strong random secrets for a production deployment.
 #
 # Creates/updates the root .env (compose secrets) and replaces the
-# placeholder SECRET_KEY in backend/yolo_classifier/.env. Idempotent:
+# placeholder SECRET_KEY in services/surveillance/.env. Idempotent:
 # values that are already set to something non-placeholder are kept.
 #
 # Usage (on the EC2 host, from the repo root):  ./scripts/generate-secrets.sh
@@ -46,10 +46,10 @@ if ! grep -q '^MEDIAMTX_PUBLIC_HOST=' .env; then
 fi
 chmod 600 .env
 
-BACKEND_ENV="backend/yolo_classifier/.env"
+BACKEND_ENV="services/surveillance/.env"
 echo "==> Backend env ($BACKEND_ENV)"
-if [ ! -f "$BACKEND_ENV" ] && [ -f "backend/yolo_classifier/.env.example" ]; then
-  cp backend/yolo_classifier/.env.example "$BACKEND_ENV"
+if [ ! -f "$BACKEND_ENV" ] && [ -f "services/surveillance/.env.example" ]; then
+  cp services/surveillance/.env.example "$BACKEND_ENV"
   echo "  created from .env.example"
 fi
 ensure_env_var "$BACKEND_ENV" SECRET_KEY "$(rand 32)"
