@@ -15,20 +15,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, HTTPException, WebSocket, status
+from fastapi import Depends, HTTPException, Request, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 
 from app.config import get_settings
 from app.mesh import OUTBOUND_SCOPES, mesh
 from argus_common.keys import public_keys_from_jwks
-from argus_common.tokens import JwksCache, StaticKeys, TokenError, UserTokenVerifier
+from argus_common.tokens import JwksCache, StaticKeys, TokenError, UserClaims, UserTokenVerifier
+from argus_common.web_auth import (
+    CookieNames,
+    CsrfError,
+    cookie_names,
+    http_credential,
+    parse_subprotocol_token,
+    websocket_credential,
+)
 
 logger = logging.getLogger(__name__)
 
 ADMIN_ROLE = "admin"
-WS_AUTH_SUBPROTOCOL = "argus-jwt"
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+# Declared for the OpenAPI "Authorize" flow; credentials are read from the
+# request (Bearer header or the dashboard's session cookie).
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
 
 @dataclass(frozen=True)
@@ -90,15 +99,18 @@ def set_token_verifier(verifier: Optional[UserTokenVerifier]) -> None:
     _verifier = verifier
 
 
-async def principal_from_token(token: str) -> Optional[Principal]:
+async def _verified_claims(token: str) -> Optional[UserClaims]:
     try:
-        claims = await token_verifier().verify(token)
+        return await token_verifier().verify(token)
     except TokenError:
         return None
     except Exception:
         # JWKS unreachable: fail closed.
         logger.exception("User token verification failed")
         return None
+
+
+def _principal(claims: UserClaims) -> Principal:
     return Principal(
         username=claims.subject,
         id=claims.user_id,
@@ -107,8 +119,26 @@ async def principal_from_token(token: str) -> Optional[Principal]:
     )
 
 
-async def get_current_active_user(token: str = Depends(oauth2_scheme)) -> Principal:
-    principal = await principal_from_token(token)
+async def principal_from_token(token: str) -> Optional[Principal]:
+    claims = await _verified_claims(token)
+    return _principal(claims) if claims else None
+
+
+def session_cookie_names() -> CookieNames:
+    settings = get_settings()
+    if not settings.AUTH_COOKIE_SECURE and not settings.DEBUG:
+        raise RuntimeError("AUTH_COOKIE_SECURE=false is only allowed with DEBUG")
+    return cookie_names(settings.AUTH_COOKIE_SECURE)
+
+
+async def get_current_active_user(
+    request: Request, _bearer: Optional[str] = Depends(oauth2_scheme_optional)
+) -> Principal:
+    try:
+        credential = http_credential(request, session_cookie_names(), get_settings().CORS_ORIGINS)
+    except CsrfError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"CSRF check failed: {exc}") from exc
+    principal = await principal_from_token(credential.token) if credential else None
     if principal is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -124,15 +154,22 @@ async def require_admin(current_user: Principal = Depends(get_current_active_use
     return current_user
 
 
-def websocket_subprotocol_token(header: str) -> Optional[str]:
-    offered = [value.strip() for value in (header or "").split(",") if value.strip()]
-    if len(offered) != 2 or offered.count(WS_AUTH_SUBPROTOCOL) != 1:
-        return None
-    return offered[1 - offered.index(WS_AUTH_SUBPROTOCOL)] or None
+websocket_subprotocol_token = parse_subprotocol_token
 
 
-async def authenticate_websocket(websocket: WebSocket) -> Optional[Principal]:
-    token = websocket_subprotocol_token(websocket.headers.get("sec-websocket-protocol", ""))
-    if not token:
+@dataclass(frozen=True)
+class WebSocketAuth:
+    principal: Principal
+    subprotocol: Optional[str]
+    expires_at: int
+
+
+async def authenticate_websocket(websocket: WebSocket) -> Optional[WebSocketAuth]:
+    """Subprotocol JWT or session cookie; foreign origins are refused."""
+    credential = websocket_credential(websocket, session_cookie_names(), get_settings().CORS_ORIGINS)
+    if credential is None:
         return None
-    return await principal_from_token(token)
+    claims = await _verified_claims(credential.token)
+    if claims is None:
+        return None
+    return WebSocketAuth(_principal(claims), credential.subprotocol, claims.expires_at)

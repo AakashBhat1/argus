@@ -2,7 +2,8 @@ import ipaddress
 import logging
 from datetime import timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -16,10 +17,21 @@ from app.services.auth import (
     get_current_active_user,
     get_optional_current_user,
     get_password_hash,
-    verify_password,
-    require_admin
+    session_cookie_names,
+    verify_password
 )
+from app.config import get_settings
 from app.services.login_attempts import login_attempt_limiter
+from app.services.sessions import (
+    IssuedSession,
+    SessionError,
+    clear_session_cookies,
+    end_session,
+    rotate_session,
+    set_session_cookies,
+    start_session,
+)
+from argus_common.web_auth import CsrfError, check_same_origin
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -44,29 +56,24 @@ def _source_ip(request: Request) -> str:
         return str(forwarded_address)
     return direct_ip
 
-@router.post("/token", response_model=Token)
-async def login_for_access_token(
-    request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(User).where(User.username == form_data.username))
+async def _authenticate(request: Request, username: str, password: str, db: AsyncSession) -> User:
+    result = await db.execute(select(User).where(User.username == username))
     user = result.scalar_one_or_none()
 
     password_hash = user.hashed_password if user is not None else DUMMY_PASSWORD_HASH
-    password_matches = verify_password(form_data.password, password_hash)
-    credentials_valid = user is not None and password_matches
+    password_matches = verify_password(password, password_hash)
+    credentials_valid = user is not None and password_matches and bool(user.is_active)
     source_ip = _source_ip(request)
     decision = login_attempt_limiter.evaluate(
         source_ip=source_ip,
-        username=form_data.username,
+        username=username,
         credentials_valid=credentials_valid,
     )
 
     if not decision.allowed:
         logger.warning(
             "Failed login attempt username=%r source_ip=%r reason=%s",
-            form_data.username[:255],
+            username[:255],
             source_ip,
             decision.reason,
         )
@@ -77,12 +84,84 @@ async def login_for_access_token(
         )
 
     assert user is not None
+    return user
+
+
+def _require_same_origin(request: Request) -> None:
+    try:
+        check_same_origin(request, get_settings().CORS_ORIGINS)
+    except CsrfError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"CSRF check failed: {exc}") from exc
+
+
+def _session_body(issued: IssuedSession) -> dict:
+    return {
+        "username": issued.user.username,
+        "role": issued.user.role,
+        "tenant_id": issued.user.tenant_id,
+        "access_expires_at": issued.access_expires_at.isoformat() + "Z",
+        "refresh_expires_at": issued.refresh_expires_at.isoformat() + "Z",
+    }
+
+
+@router.post("/token", response_model=Token)
+async def login_for_access_token(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bearer token for API clients. The dashboard uses /auth/session."""
+    user = await _authenticate(request, form_data.username, form_data.password, db)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username, "uid": user.id, "role": user.role, "tenant_id": user.tenant_id},
         expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/session")
+async def create_session(
+    request: Request,
+    response: Response,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sign in to the dashboard: session cookies the page cannot read."""
+    # Login CSRF: a foreign page must not sign the browser into its account.
+    _require_same_origin(request)
+    user = await _authenticate(request, form_data.username, form_data.password, db)
+    issued = await start_session(db, user, request.headers.get("user-agent"))
+    set_session_cookies(response, issued)
+    return _session_body(issued)
+
+
+@router.post("/refresh")
+async def refresh_session(request: Request, db: AsyncSession = Depends(get_db)):
+    _require_same_origin(request)
+    token = request.cookies.get(session_cookie_names().refresh)
+    try:
+        if not token:
+            raise SessionError("no session")
+        issued = await rotate_session(db, token, request.headers.get("user-agent"))
+    except SessionError as exc:
+        logger.info("Session refresh refused: %s", exc)
+        failed = JSONResponse({"detail": "Session expired"}, status_code=status.HTTP_401_UNAUTHORIZED)
+        clear_session_cookies(failed)
+        return failed
+    response = JSONResponse(_session_body(issued))
+    set_session_cookies(response, issued)
+    return response
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(request: Request, db: AsyncSession = Depends(get_db)):
+    _require_same_origin(request)
+    await end_session(db, request.cookies.get(session_cookie_names().refresh))
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    clear_session_cookies(response)
+    return response
+
 
 @router.get("/users/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):

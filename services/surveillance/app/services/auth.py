@@ -5,7 +5,9 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, HTTPException, WebSocket, status
+from dataclasses import dataclass
+
+from fastapi import Depends, HTTPException, Request, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from sqlalchemy import select
@@ -14,6 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from argus_common.keys import KeyConfigError, SigningKey, jwks, key_id_for, load_public_pem, load_signing_key
 from argus_common.tokens import StaticKeys, TokenError, UserClaims, UserTokenIssuer, UserTokenVerifier
+from argus_common.web_auth import (
+    CookieNames,
+    CsrfError,
+    cookie_names,
+    http_credential,
+    parse_subprotocol_token,
+    websocket_credential,
+)
 from app.database import get_db, get_session_factory
 from app.models import User, UserRole
 
@@ -36,7 +46,9 @@ _INSECURE_DEFAULTS = {
 }
 SECRET_KEY = os.getenv("SECRET_KEY", _INSECURE_DEFAULT)
 
-_DEFAULT_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+# Bearer tokens for API clients (/auth/token). The dashboard uses cookie
+# sessions with much shorter access tokens (app.services.sessions).
+_DEFAULT_TOKEN_EXPIRE_MINUTES = 60
 try:
     ACCESS_TOKEN_EXPIRE_MINUTES = int(
         os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(_DEFAULT_TOKEN_EXPIRE_MINUTES))
@@ -62,7 +74,6 @@ if not _debug_mode:
         )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
 def verify_password(plain_password, hashed_password):
@@ -182,30 +193,37 @@ async def _active_user_for(claims: UserClaims, session: AsyncSession) -> Optiona
     return user
 
 
-WS_AUTH_SUBPROTOCOL = "argus-jwt"
+def session_cookie_names() -> CookieNames:
+    settings = get_settings()
+    if not settings.AUTH_COOKIE_SECURE and not settings.DEBUG:
+        raise RuntimeError("AUTH_COOKIE_SECURE=false is only allowed with DEBUG")
+    return cookie_names(settings.AUTH_COOKIE_SECURE)
 
 
-def websocket_subprotocol_token(header: str) -> Optional[str]:
-    """Extract the JWT from ``Sec-WebSocket-Protocol: argus-jwt, <token>``.
+def _allowed_origins() -> list[str]:
+    return list(get_settings().CORS_ORIGINS)
 
-    The marker is located by value rather than position so an intermediary
-    that reorders the list cannot break authentication; anything other than
-    exactly the marker plus one token is rejected.
-    """
-    offered = [value.strip() for value in (header or "").split(",") if value.strip()]
-    if len(offered) != 2 or offered.count(WS_AUTH_SUBPROTOCOL) != 1:
+
+# Kept for callers of the pre-cookie helper.
+websocket_subprotocol_token = parse_subprotocol_token
+
+
+@dataclass(frozen=True)
+class WebSocketAuth:
+    user: User
+    # Echo the subprotocol only if the client offered one.
+    subprotocol: Optional[str]
+    expires_at: int
+
+
+async def authenticate_websocket(websocket: WebSocket) -> Optional[WebSocketAuth]:
+    """Authenticate an active user from the handshake (subprotocol JWT or
+    session cookie); foreign origins are refused."""
+    credential = websocket_credential(websocket, session_cookie_names(), _allowed_origins())
+    if credential is None:
         return None
-    token = offered[1 - offered.index(WS_AUTH_SUBPROTOCOL)]
-    return token or None
 
-
-async def authenticate_websocket(websocket: WebSocket) -> Optional[User]:
-    """Authenticate an active user from a WebSocket subprotocol JWT."""
-    token = websocket_subprotocol_token(websocket.headers.get("sec-websocket-protocol", ""))
-    if not token:
-        return None
-
-    claims = decode_access_token(token)
+    claims = decode_access_token(credential.token)
     if claims is None:
         return None
 
@@ -220,14 +238,33 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[User]:
         logger.exception("WebSocket authentication session is unavailable")
         return None
 
-    return user
+    if user is None:
+        return None
+    return WebSocketAuth(user, credential.subprotocol, claims.expires_at)
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+
+def _request_token(request: Request) -> Optional[str]:
+    try:
+        credential = http_credential(request, session_cookie_names(), _allowed_origins())
+    except CsrfError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"CSRF check failed: {exc}") from exc
+    return credential.token if credential else None
+
+
+async def get_current_user(
+    request: Request,
+    # Declared for the OpenAPI "Authorize" flow; the header is read below.
+    _bearer: Optional[str] = Depends(oauth2_scheme_optional),
+    db: AsyncSession = Depends(get_db),
+):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = _request_token(request)
+    if not token:
+        raise credentials_exception
     claims = decode_access_token(token)
     if claims is None:
         raise credentials_exception
@@ -237,14 +274,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     return user
 
 async def get_optional_current_user(
-    token: Optional[str] = Depends(oauth2_scheme_optional),
+    request: Request,
+    _bearer: Optional[str] = Depends(oauth2_scheme_optional),
     db: AsyncSession = Depends(get_db),
 ) -> Optional[User]:
-    """Resolve the current user if a valid bearer token was sent, else None.
+    """Resolve the current user if valid credentials were sent, else None.
 
     Used by endpoints that behave differently for anonymous callers
     (e.g. first-user bootstrap on /auth/users) instead of hard-failing.
     """
+    token = _request_token(request)
     if not token:
         return None
     claims = decode_access_token(token)

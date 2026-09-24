@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { removeToken } from "@/lib/auth";
+import { signOut } from "@/lib/session";
 import {
   LayoutDashboard,
   Camera,
@@ -58,8 +58,8 @@ export default function Sidebar() {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  function handleLogout() {
-    removeToken();
+  async function handleLogout() {
+    await signOut();
     router.push("/login");
   }
 

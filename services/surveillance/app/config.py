@@ -57,6 +57,17 @@ class Settings(VisionSettings, ServiceMeshSettings):
     AUTH_ISSUER: str = "argus-surveillance"
     AUTH_AUDIENCE: str = "argus"
 
+    # Dashboard sessions: httpOnly cookies holding a short access token and a
+    # rotating refresh token (see argus_common.web_auth).
+    AUTH_SESSION_ACCESS_TTL_SECONDS: int = 600
+    # A session ends after this long without a refresh...
+    AUTH_SESSION_IDLE_SECONDS: int = 12 * 3600
+    # ...and in any case this long after sign-in.
+    AUTH_SESSION_MAX_SECONDS: int = 24 * 3600
+    # Secure, prefixed cookie names. Plain-http development on a LAN address
+    # needs False, which is refused unless DEBUG.
+    AUTH_COOKIE_SECURE: bool = True
+
     # Local SQLite DB for the classifier-only service
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DB_PATH}"
 

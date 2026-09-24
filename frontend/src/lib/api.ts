@@ -1,4 +1,5 @@
-import { getToken } from "./auth";
+import { clearSession } from "./auth";
+import { CSRF_HEADERS, ensureFreshSession, refreshSession } from "./session";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
@@ -6,38 +7,53 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v
 const REQUEST_TIMEOUT_MS = 30_000;
 
 interface FetchBehaviour {
-  /** Do not bounce to /login on 401 (optional peer services, e.g. parking). */
+  /** Do not refresh or bounce to /login on 401 (optional peer services, e.g. parking). */
   noAuthRedirect?: boolean;
 }
 
+function sendToLogin(): void {
+  clearSession();
+  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+    window.location.href = "/login";
+  }
+}
+
+/** fetch with the session cookies and the CSRF header. */
+async function authorizedFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    credentials: "include",
+    headers: { ...CSRF_HEADERS, ...(init?.headers as Record<string, string> | undefined) },
+  });
+}
+
 async function fetchApi<T>(endpoint: string, options?: RequestInit, behaviour?: FetchBehaviour): Promise<T> {
-  const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options?.headers as Record<string, string> || {}),
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(`${API_BASE}${endpoint}`, {
+  const send = () =>
+    authorizedFetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers,
       signal: options?.signal ?? controller.signal,
     });
 
-    if (
-      res.status === 401 &&
-      !behaviour?.noAuthRedirect &&
-      typeof window !== "undefined" &&
-      !window.location.pathname.startsWith("/login")
-    ) {
-      window.location.href = "/login";
+  try {
+    await ensureFreshSession();
+    let res = await send();
+
+    if (res.status === 401 && !behaviour?.noAuthRedirect) {
+      // The access token may have been revoked or expired in the meantime.
+      if (await refreshSession()) {
+        res = await send();
+      }
+      if (res.status === 401) {
+        sendToLogin();
+      }
     }
 
     if (!res.ok) {
@@ -643,11 +659,9 @@ export const api = {
   metrics: {
     get: () => fetchApi<InferenceMetrics>("/metrics/"),
     model: () => fetchApi<ModelInfo>("/metrics/model"),
-    prometheus: () => {
-      const token = getToken();
-      return fetch(`${API_BASE}/metrics/prometheus`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      }).then((r) => r.text());
+    prometheus: async () => {
+      await ensureFreshSession();
+      return authorizedFetch(`${API_BASE}/metrics/prometheus`).then((r) => r.text());
     },
   },
 

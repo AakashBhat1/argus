@@ -17,7 +17,8 @@ from app.database import get_session_factory, init_db
 from app.mesh import mesh
 from app.models import Camera
 from app.routers import cameras, internal, parking, parking_chat
-from app.services.auth import WS_AUTH_SUBPROTOCOL, authenticate_websocket
+from app.services.auth import authenticate_websocket
+from argus_common.web_auth import WS_AUTH_CLOSE_CODE, hold_until_expiry
 from app.services.outbox import outbox_runner
 from app.services.stream_manager import stream_manager
 from app.services.websocket_manager import ws_manager
@@ -92,10 +93,11 @@ async def health():
 
 
 async def _serve_channel(websocket: WebSocket, channel: str) -> None:
-    principal = await authenticate_websocket(websocket)
-    if principal is None:
-        await websocket.close(code=4001)
+    auth = await authenticate_websocket(websocket)
+    if auth is None:
+        await websocket.close(code=WS_AUTH_CLOSE_CODE)
         return
+    principal = auth.principal
     if channel != EVENTS_CHANNEL:
         # Camera channels are tenant-scoped: the camera must belong to the caller.
         try:
@@ -109,12 +111,11 @@ async def _serve_channel(websocket: WebSocket, channel: str) -> None:
             logger.exception("WebSocket camera authorization failed")
             camera = None
         if camera is None:
-            await websocket.close(code=4001)
+            await websocket.close(code=WS_AUTH_CLOSE_CODE)
             return
-    await ws_manager.connect(websocket, channel, tenant_id=principal.tenant_id, subprotocol=WS_AUTH_SUBPROTOCOL)
+    await ws_manager.connect(websocket, channel, tenant_id=principal.tenant_id, subprotocol=auth.subprotocol)
     try:
-        while True:
-            await websocket.receive_text()
+        await hold_until_expiry(websocket, auth.expires_at)
     except WebSocketDisconnect:
         pass
     finally:

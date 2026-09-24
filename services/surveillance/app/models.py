@@ -256,3 +256,27 @@ class OutboxEvent(OutboxEventMixin, Base):
 
 class InboxEvent(InboxEventMixin, Base):
     pass
+
+
+class AuthSession(Base):
+    """One refresh token of a dashboard session.
+
+    Refresh tokens are single use: each refresh marks the presented row used
+    and issues a new row in the same family. Presenting a used token again
+    (outside a short race window) means it was copied, so the whole family is
+    revoked. Only a SHA-256 of the token is stored.
+    """
+
+    __tablename__ = "auth_sessions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    family_id = Column(String(36), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    # Idle expiry of this token; family_expires_at caps the whole session.
+    expires_at = Column(DateTime, nullable=False)
+    family_expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    user_agent = Column(String(200), nullable=True)

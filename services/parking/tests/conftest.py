@@ -34,6 +34,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
+import app.models  # noqa: F401  (register every table before create_all)
 from app.services import auth as auth_module
 from support import identity
 from support.identity import User, UserRole

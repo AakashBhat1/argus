@@ -52,6 +52,9 @@ class Settings(VisionSettings, ServiceMeshSettings):
     # Alternatively a JWKS file distributed with the deployment.
     AUTH_JWKS_FILE: str | None = None
     AUTH_JWKS_TTL_SECONDS: float = 300.0
+    # Must match the identity provider's setting: dashboard session cookies
+    # use Secure, prefixed names unless both run in DEBUG over plain http.
+    AUTH_COOKIE_SECURE: bool = True
 
     # -- Peers ---------------------------------------------------------------
     # Internal base URL of the surveillance service (receives parking events).

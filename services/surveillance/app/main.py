@@ -14,6 +14,7 @@ from app.detection import detector
 from app.models import Camera
 from app.routers import alerts, analytics, cameras, crime, detections, intents, internal, metrics, roboflow, security, streams, videos, zones, auth
 from app.services.auth import authenticate_websocket, jwks_document, signing_key
+from argus_common.web_auth import WS_AUTH_CLOSE_CODE, hold_until_expiry
 from argus_vision.inference_worker import InferenceWorkerPool
 from argus_vision.metrics import inference_metrics
 from app.services.roboflow_classifier import roboflow_classifier
@@ -164,12 +165,12 @@ async def health_check():
 
 @app.websocket("/ws/{channel}")
 async def websocket_endpoint(websocket: WebSocket, channel: str):
-    current_user = await authenticate_websocket(websocket)
-    if current_user is None:
-        await websocket.close(code=4001)
+    auth = await authenticate_websocket(websocket)
+    if auth is None:
+        await websocket.close(code=WS_AUTH_CLOSE_CODE)
         return
 
-    tenant_id = current_user.tenant_id
+    tenant_id = auth.user.tenant_id
     if channel not in NON_CAMERA_CHANNELS:
         try:
             session_factory = get_session_factory()
@@ -179,24 +180,24 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
                 )
                 camera = cam_res.scalar_one_or_none()
                 if not camera:
-                    await websocket.close(code=4001)
+                    await websocket.close(code=WS_AUTH_CLOSE_CODE)
                     return
         except (SQLAlchemyError, RuntimeError):
             logger.exception("WebSocket camera authorization failed")
-            await websocket.close(code=4001)
+            await websocket.close(code=WS_AUTH_CLOSE_CODE)
             return
 
     await ws_manager.connect(
         websocket,
         channel,
         tenant_id=tenant_id,
-        subprotocol="argus-jwt",
+        subprotocol=auth.subprotocol,
     )
     try:
-        while True:
-            data = await websocket.receive_text()
-            logger.debug(f"WS message on {channel}: {data}")
+        await hold_until_expiry(websocket, auth.expires_at)
     except WebSocketDisconnect:
-        await ws_manager.disconnect(websocket, channel, tenant_id=tenant_id)
+        pass
     except Exception:
+        logger.debug("WebSocket on %s ended with an error", channel, exc_info=True)
+    finally:
         await ws_manager.disconnect(websocket, channel, tenant_id=tenant_id)

@@ -30,7 +30,7 @@ server {
     # request came through the gateway).
     location /api/v1/parking/ {
         if ($argus_client_cn != "gateway") { return 403; }
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $http_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Argus-Client-Verified "";
@@ -40,7 +40,7 @@ server {
     location /ws/parking {
         if ($argus_client_cn != "gateway") { return 403; }
         include /etc/nginx/snippets/websocket.conf;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header X-Argus-Client-Verified "";
         proxy_set_header X-Argus-Client-Service "";
         proxy_pass http://parking_api;
