@@ -27,7 +27,7 @@ from app.services.parking_occupancy import (
     SlotReading,
     SlotTransition,
 )
-from app.services.stream_manager import _open_capture, _resolve_stream_source
+from argus_vision.sources import open_capture as _open_capture, resolve_stream_source as _resolve_stream_source
 from app.services.parking_occupancy_service import (
     ParkingOccupancyStage,
     apply_occupancy_tick,

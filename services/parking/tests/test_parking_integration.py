@@ -18,8 +18,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models import Camera, User, UserRole, ParkingSpace, DetectedPlate, ParkingActivityLog
-from app.services.auth import create_access_token
+from app.models import Camera, ParkingSpace, DetectedPlate, ParkingActivityLog
+from support.identity import User, UserRole
+from support.identity import create_access_token
 from app.services import parking_service
 from app.services.parking_seeder import seed_parking_spaces_for_tenant
 from app.utils import utc_now
@@ -29,6 +30,7 @@ def _token_for(user: User) -> str:
     return create_access_token(
         data={
             "sub": user.username,
+            "uid": user.id,
             "role": user.role,
             "tenant_id": user.tenant_id,
         },
@@ -58,8 +60,6 @@ async def tenant2_admin(db_session: AsyncSession) -> User:
         tenant_id="tenant-2",
         is_active=True,
     )
-    db_session.add(user)
-    await db_session.flush()
     return user
 
 

@@ -119,12 +119,13 @@ class TestStreamUrlSsrfValidation:
         self, monkeypatch, tmp_path
     ):
         from app.routers import cameras
+        from argus_vision import sources
 
         unsupported = tmp_path / "sample.txt"
         unsupported.touch()
         monkeypatch.setattr(
-            cameras,
-            "_resolve_stream_source",
+            sources,
+            "resolve_stream_source",
             lambda _stream_url: str(unsupported),
         )
 

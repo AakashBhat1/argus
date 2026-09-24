@@ -11,65 +11,16 @@ from app.models import (
     Detection, Alert, RoiEvent, AnalyticsSnapshot, Track, IntentEvent
 )
 from app.schemas import CameraCreate, CameraUpdate, CameraResponse
-from argus_common.net import StreamTargetError, policy_from_settings, validate_stream_target
+from argus_vision.sources import SourceError, validate_camera_source
 from app.services.auth import get_current_active_user
 from app.services.stream_manager import _resolve_stream_source, stream_manager
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
-_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".webm", ".flv", ".wmv", ".m4v"}
-
-
-def _validate_stream_url(stream_url: str):
-    value = stream_url.strip()
-    if not value:
-        raise HTTPException(
-            status_code=422,
-            detail="stream_url must not be empty.",
-        )
-    if value.lower() == "string":
-        raise HTTPException(
-            status_code=422,
-            detail="Invalid stream_url placeholder 'string'. Use webcam index (e.g. '0'), RTSP URL, or file path.",
-        )
-    # Local capture device index (e.g. "0", "1")
-    if value.isdigit():
-        if not get_settings().ALLOW_LOCAL_CAPTURE_DEVICES:
-            raise HTTPException(
-                status_code=422,
-                detail="Local capture devices are disabled (ALLOW_LOCAL_CAPTURE_DEVICES=false).",
-            )
-        return
-    # Allow video:// protocol — resolves to a file in the video/ folder
-    if value.startswith("video://"):
-        filename = value[len("video://"):]
-        if not filename or "/" in filename or "\\" in filename:
-            raise HTTPException(
-                status_code=422,
-                detail="Invalid video filename. Use format: video://filename.mp4",
-            )
-        resolved_source = _resolve_stream_source(value)
-        video_path = Path(resolved_source)
-        if resolved_source == value or not video_path.is_file():
-            raise HTTPException(
-                status_code=422,
-                detail=f"Video file '{filename}' not found in video folder.",
-            )
-        if video_path.suffix.lower() not in _VIDEO_EXTENSIONS:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Unsupported video format '{video_path.suffix}'. Allowed: {', '.join(sorted(_VIDEO_EXTENSIONS))}",
-            )
-        return
-    settings = get_settings()
-    if "://" not in value:
-        raise HTTPException(
-            status_code=422,
-            detail="stream_url must be an rtsp(s):// URL, a video:// file, or a webcam index.",
-        )
+def _validate_stream_url(stream_url: str) -> None:
     try:
-        validate_stream_target(value, policy_from_settings(settings))
-    except StreamTargetError as exc:
+        validate_camera_source(stream_url)
+    except SourceError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -143,8 +94,6 @@ async def update_camera(
 
     if "calibration" in update_data:
         stream_manager.update_camera_calibration(camera_id, camera.calibration)
-    if "role" in update_data or "gate_roi" in update_data:
-        stream_manager.update_camera_gate(camera_id, camera.role, camera.gate_roi)
     return camera
 
 

@@ -23,6 +23,7 @@ from app.services.parking_occupancy import (
     SlotReading,
     SlotTransition,
 )
+from app.services.events import publish_alerts
 from app.services.websocket_manager import ws_manager
 from app.utils import utc_now
 
@@ -230,6 +231,7 @@ async def apply_occupancy_tick(
                 )
             )
             db.add_all(alerts)
+            await publish_alerts(db, alerts)
             if applied or alerts:
                 await db.commit()
 
@@ -270,6 +272,7 @@ async def persist_anomaly_alerts(alerts: list[Alert]) -> None:
         session_factory = database.get_session_factory()
         async with session_factory() as db:
             db.add_all(alerts)
+            await publish_alerts(db, alerts)
             await db.commit()
         for alert in alerts:
             await ws_manager.broadcast_alert(

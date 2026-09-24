@@ -23,6 +23,7 @@ from argus_common.net import (
     policy_from_settings,
     recheck_stream_target,
     redact_url,
+    validate_stream_target,
 )
 from argus_vision.settings import get_settings
 
@@ -127,3 +128,53 @@ def mediamtx_read_url(camera_id: str, settings: Optional[object] = None) -> str:
             creds += ":" + quote(password, safe="")
         base = f"{scheme}://{creds}@{rest}"
     return f"{base}/{quote(str(camera_id), safe='')}"
+
+
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".webm", ".flv", ".wmv", ".m4v"}
+
+
+class SourceError(ValueError):
+    """A camera source is not acceptable; the message is safe to return."""
+
+
+def validate_camera_source(stream_url: str) -> None:
+    """Validate operator-supplied camera sources (SSRF and file access).
+
+    Accepts a local capture index (if enabled), ``video://<file>`` inside the
+    configured video folders, or a network URL permitted by the SSRF policy.
+    Bare filesystem paths and ``file://`` URLs are rejected.
+    """
+    settings = get_settings()
+    value = (stream_url or "").strip()
+    if not value:
+        raise SourceError("stream_url must not be empty.")
+    if value.lower() == "string":
+        raise SourceError(
+            "Invalid stream_url placeholder 'string'. Use webcam index (e.g. '0'), RTSP URL, or file path."
+        )
+    if value.isdigit():
+        if not settings.ALLOW_LOCAL_CAPTURE_DEVICES:
+            raise SourceError("Local capture devices are disabled (ALLOW_LOCAL_CAPTURE_DEVICES=false).")
+        return
+    if value.startswith("video://"):
+        filename = value[len("video://"):]
+        if not filename or "/" in filename or "\\" in filename:
+            raise SourceError("Invalid video filename. Use format: video://filename.mp4")
+        resolved = resolve_stream_source(value)
+        video_path = Path(resolved) if isinstance(resolved, str) else None
+        if resolved == value or video_path is None or not video_path.is_file():
+            raise SourceError(f"Video file '{filename}' not found in video folder.")
+        if video_path.suffix.lower() not in VIDEO_EXTENSIONS:
+            raise SourceError(
+                f"Unsupported video format '{video_path.suffix}'. "
+                f"Allowed: {', '.join(sorted(VIDEO_EXTENSIONS))}"
+            )
+        return
+    if "://" not in value:
+        raise SourceError(
+            "stream_url must be an rtsp(s):// URL, a video:// file, or a webcam index."
+        )
+    try:
+        validate_stream_target(value, policy_from_settings(settings))
+    except StreamTargetError as exc:
+        raise SourceError(str(exc)) from exc

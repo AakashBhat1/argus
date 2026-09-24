@@ -215,6 +215,30 @@ class AuthorizationRegistry:
             )
         return None
 
+    def register_vehicle_arrival(
+        self,
+        tenant_id: str,
+        plate_text: str,
+        profile_type: Optional[str],
+        label: Optional[str] = None,
+    ) -> Grant:
+        """An authorized vehicle entered at a (parking) gate on another host.
+
+        Unlike ``register_vehicle_plate`` there is no local vehicle track, so
+        this is a site-wide, time-boxed grant that ``resolve`` applies only
+        to persons seen stepping out of a vehicle.
+        """
+        settings = get_settings()
+        profile = (profile_type or "authorized").lower()
+        return self._add_grant(
+            tenant_id,
+            kind="plate",
+            scope="site",
+            label=f"{label or profile.title()} vehicle {plate_text}",
+            ttl_sec=float(settings.RISK_VEHICLE_LINK_TTL_SEC),
+            subject=plate_text,
+        )
+
     def revoke(self, tenant_id: str, grant_id: str) -> bool:
         with self._lock:
             removed = self._state(tenant_id).grants.pop(grant_id, None)

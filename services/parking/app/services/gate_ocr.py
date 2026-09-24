@@ -15,7 +15,7 @@ import numpy as np
 from app.config import get_settings
 from app.database import get_session_factory
 from app.models import VehicleProfile
-from app.services.authorization import authorization_registry
+from app.services.events import publish_gate_pass
 from app.services.ocr_service import recognize_plate
 from app.services import parking_service
 from app.services.websocket_manager import ws_manager
@@ -329,21 +329,18 @@ class GateOcrTrigger:
                             session, self.tenant_id, plate
                         )
                     profile = await session.get(VehicleProfile, det.vehicle_id) if det.vehicle_id else None
-                    await session.commit()
-
-                # Tell the site authorization registry who just arrived so that
-                # persons stepping out of this vehicle inherit its status.
-                try:
-                    authorization_registry.register_vehicle_plate(
-                        self.tenant_id,
+                    # Tell the surveillance site who just arrived (committed
+                    # atomically with the plate read), so persons stepping
+                    # out of an authorized vehicle inherit its status.
+                    publish_gate_pass(
+                        session,
+                        tenant_id=self.tenant_id,
+                        plate=plate,
                         camera_id=self.camera_id,
-                        track_id=int(track_key),
-                        plate_text=plate,
+                        direction="exit" if self._camera_role == "gate_exit" else "entry",
                         profile_type=profile.profile_type if profile else None,
-                        owner_name=profile.owner_name if profile else None,
                     )
-                except (TypeError, ValueError):
-                    logger.debug("Gate OCR: could not register plate for track %s", track_key)
+                    await session.commit()
 
                 payload = {
                     "type": "parking",

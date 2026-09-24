@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import Camera, ParkingSpace, User, generate_uuid
+from app.models import Camera, ParkingSpace, generate_uuid
 from app.schemas import (
     DetectedPlateResponse,
     ParkingActivityResponse,
@@ -24,11 +24,11 @@ from app.schemas import (
     ReleaseSpaceResponse,
 )
 from app.services import parking_service
-from app.services.auth import get_current_active_user, require_admin
+from app.services.auth import Principal as User, get_current_active_user, require_admin
 from app.services.parking_seeder import seed_parking_spaces_for_tenant
 from app.services.parking_occupancy import OccupancyDetector, SlotGeometry
 from app.services.parking_occupancy_service import set_cached_slots, slots_from_rows
-from app.services.stream_manager import _open_capture
+from argus_vision.sources import open_capture as _open_capture
 from app.services.websocket_manager import ws_manager
 
 router = APIRouter(prefix="/parking", tags=["parking"])

@@ -7,14 +7,15 @@ from datetime import timedelta
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from app.models import User
-from app.services.auth import create_access_token
+from support.identity import User
+from support.identity import create_access_token
 
 
 def _token_for(user: User) -> str:
     return create_access_token(
         data={
             "sub": user.username,
+            "uid": user.id,
             "role": user.role,
             "tenant_id": user.tenant_id,
         },
@@ -25,20 +26,20 @@ def _token_for(user: User) -> str:
 class TestParkingWebSocket:
 
     @pytest.mark.asyncio
-    async def test_non_camera_channels_includes_parking(self):
-        """Guard the regression: verify "parking" is registered as a non-camera channel."""
-        from app.main import NON_CAMERA_CHANNELS
-        assert "parking" in NON_CAMERA_CHANNELS
+    async def test_events_channel_is_the_parking_channel(self):
+        """The /ws/parking socket must serve the "parking" events channel."""
+        from app.main import EVENTS_CHANNEL
+        assert EVENTS_CHANNEL == "parking"
 
     @pytest.mark.asyncio
-    async def test_unknown_channel_is_rejected_4001(self, app_with_db, admin_user):
-        """Verify that an unknown channel not in the whitelist is closed with 4001."""
+    async def test_unknown_camera_channel_is_rejected_4001(self, app_with_db, admin_user):
+        """A camera channel that is not the caller's camera is closed with 4001."""
         client = TestClient(app_with_db)
         token = _token_for(admin_user)
         
         with pytest.raises(WebSocketDisconnect) as exc_info:
             with client.websocket_connect(
-                "/ws/not-a-camera", subprotocols=["argus-jwt", token]
+                "/ws/parking/not-a-camera", subprotocols=["argus-jwt", token]
             ) as ws:
                 ws.receive()
                 

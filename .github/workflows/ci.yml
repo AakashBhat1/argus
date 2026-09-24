@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [surveillance]
+        service: [surveillance, parking]
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
@@ -54,6 +54,21 @@ jobs:
         run: |
           alembic upgrade head
           alembic downgrade base
+
+  shared-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: packages/*/pyproject.toml
+      - name: Install argus_common
+        run: python -m pip install -e "packages/argus_common[dev]"
+      - name: Test argus_common
+        working-directory: packages/argus_common
+        run: python -m pytest -q
 
   frontend:
     runs-on: ubuntu-latest

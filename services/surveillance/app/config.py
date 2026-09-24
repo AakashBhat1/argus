@@ -4,6 +4,7 @@ from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import SettingsConfigDict
 
+from argus_common.mesh import ServiceMeshSettings
 from argus_vision import settings as vision_settings
 from argus_vision.settings import DEFAULT_ALLOWED_CLASSES, VisionSettings
 
@@ -24,7 +25,7 @@ def env_file_path() -> str | None:
     return os.path.join(BASE_DIR, ".env")
 
 
-class Settings(VisionSettings):
+class Settings(VisionSettings, ServiceMeshSettings):
     """Surveillance service configuration.
 
     Vision pipeline settings (OpenVINO, ROI, tracker, stream sources,
@@ -37,9 +38,24 @@ class Settings(VisionSettings):
     )
 
     SERVICE_DIR: str = BASE_DIR
+    SERVICE_NAME: str = "surveillance"
+
+    # Internal base URL of the parking service (receives arming changes).
+    # Leave unset when parking is not deployed.
+    PARKING_INTERNAL_URL: str | None = None
+    OUTBOX_POLL_INTERVAL_SEC: float = 1.0
 
     APP_NAME: str = "AI Surveillance System"
     DEBUG: bool = False
+
+    # -- Identity provider (access tokens) -----------------------------------
+    # Ed25519 private key (PEM, chmod 600) that signs user access tokens.
+    # Required unless DEBUG (which falls back to an ephemeral key).
+    AUTH_SIGNING_KEY_FILE: str | None = None
+    # Public PEMs of retired signing keys still accepted during rotation.
+    AUTH_PREVIOUS_PUBLIC_KEYS_DIR: str | None = None
+    AUTH_ISSUER: str = "argus-surveillance"
+    AUTH_AUDIENCE: str = "argus"
 
     # Local SQLite DB for the classifier-only service
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DB_PATH}"
@@ -153,8 +169,6 @@ class Settings(VisionSettings):
     # Local directory to cache the downloaded model.
     CRIME_CLASSIFIER_CACHE_DIR: str = "models/crime_classifier"
 
-    CRIME_CLASSIFIER_TRIGGER_ON_PARKING: bool = False
-
     # By default the classifier only nudges the risk score. Set true to also
     # raise a MEDIUM "verify footage" alert on its own.
     CRIME_CLASSIFIER_STANDALONE_ALERTS: bool = False
@@ -163,32 +177,6 @@ class Settings(VisionSettings):
     # weights file, so an upstream change cannot silently swap the model.
     CRIME_CLASSIFIER_MODEL_REVISION: str | None = None
     CRIME_CLASSIFIER_MODEL_SHA256: str | None = None
-
-    # -- Vision parking occupancy --------------------------------------------
-    PARKING_OCCUPANCY_ENABLED: bool = True
-    PARKING_OCCUPANCY_INTERVAL_SEC: float = 2.0
-    PARKING_OCCUPANCY_HI: float = 0.22
-    PARKING_OCCUPANCY_LO: float = 0.10
-    PARKING_OCCUPANCY_IOU_MIN: float = 0.40
-    PARKING_OCCUPANCY_TEXTURE_FALLBACK: bool = False
-    # Detector classes that occupy a bay (trucks/buses are scored by how much
-    # of the bay they cover; motorcycles by how much of them is inside it).
-    PARKING_VEHICLE_CLASSES: list[str] = ["car", "truck", "bus", "motorcycle"]
-    PARKING_OCCUPANCY_DEBOUNCE_FRAMES: int = 5
-
-    # -- Parking anomaly rules ------------------------------------------------
-    PARKING_ANOMALY_ENABLED: bool = True
-    PARKING_ANOMALY_COOLDOWN_SEC: float = 300.0
-    PARKING_GHOST_OCCUPANCY_MIN: float = 10.0
-    PARKING_GHOST_PLATE_LOOKBACK_MIN: float = 15.0
-    PARKING_LOITER_MIN_SEC: float = 45.0
-    PARKING_CAR_HOP_MIN_SLOTS: int = 3
-    PARKING_CAR_HOP_MIN_STATIONARY: float = 0.35
-    PARKING_CHURN_THRESHOLD: int = 6
-    PARKING_CHURN_WINDOW_MIN: float = 15.0
-    PARKING_QUIET_HOURS_START: int = 22
-    PARKING_QUIET_HOURS_END: int = 6
-    PARKING_QUIET_HOURS_TZ: str = 'UTC'
 
     # -- Data Retention -------------------------------------------------------
     RETENTION_ENABLED: bool = True
@@ -199,21 +187,6 @@ class Settings(VisionSettings):
     # Optional extended cleanup for large deployments.
     RETENTION_DELETE_ROI_EVENTS: bool = False
     RETENTION_DELETE_ANALYTICS_SNAPSHOTS: bool = False
-
-    # -- Smart Parking --------------------------------------------------------
-    # Hourly tariff in INR (rounded up per hour after free-window).
-    PARKING_RATE_PER_HOUR: float = 20.0
-    # Stays under this many minutes bill a flat short-stay rate.
-    PARKING_FREE_MINUTES: int = 5
-    PARKING_SHORT_STAY_RATE: float = 10.0
-    # Minimum OCR confidence to accept a plate reading.
-    PARKING_OCR_CONFIDENCE_THRESHOLD: float = 0.50
-    # Vehicle classes that can trigger gate OCR.
-    PARKING_OCR_TRIGGER_CLASSES: list[str] = ["car", "motorcycle", "bus", "truck"]
-    # ParkBot / Ollama
-    PARKING_OLLAMA_BASE_URL: str = "http://localhost:11434"
-    PARKING_OLLAMA_MODEL: str = "qwen3:0.6b"
-    PARKING_OLLAMA_TIMEOUT_SECONDS: float = 30.0
 
     @field_validator("DEBUG", mode="before")
     @classmethod

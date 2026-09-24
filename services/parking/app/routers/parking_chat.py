@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import User
+
 from app.schemas import ParkingChatRequest, ParkingChatResponse
-from app.services.auth import get_current_active_user, require_admin
+from app.services.auth import Principal as User, get_current_active_user, require_admin
 from app.services.parking_assistant import parking_assistant
 
 router = APIRouter(prefix="/parking", tags=["parking-chat"])

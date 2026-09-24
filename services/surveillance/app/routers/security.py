@@ -8,7 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from argus_vision.geometry import DEFAULT_CLASS_SIZES_M
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
 from app.models import User
+from app.services.outbox import publish_arm_mode
 from app.services.auth import get_current_active_user, require_admin
 from app.services.authorization import ARM_MODES, authorization_registry
 from app.services.stream_manager import stream_manager
@@ -84,9 +88,13 @@ def _live_risk(tenant_id: str) -> list[dict]:
 async def set_arm_mode(
     data: ArmRequest,
     current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     tenant_id = current_user.tenant_id
     mode = authorization_registry.set_arm_mode(tenant_id, data.mode, actor=current_user.username)
+    # Parking (on its own host) escalates its anomaly rules while armed.
+    publish_arm_mode(db, tenant_id, mode, current_user.username)
+    await db.commit()
     await _broadcast_state(tenant_id, {"type": "arm_mode", "mode": mode, "actor": current_user.username})
     return {"arm_mode": mode}
 

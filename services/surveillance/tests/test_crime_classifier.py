@@ -1,4 +1,4 @@
-'''Regression guards for shared intrusion and parking crime triggers.'''
+'''Regression guards for the (experimental) crime classifier triggers.'''
 
 from app.services.crime_classifier import CrimeClassifier
 
@@ -7,15 +7,16 @@ def _classifier() -> CrimeClassifier:
     classifier = CrimeClassifier()
     classifier._enabled = True
     classifier._trigger_classes = {'person'}
-    classifier._trigger_on_parking = True
     classifier._cooldown_map.clear()
     return classifier
 
 
-def test_parking_person_activity_can_trigger_without_intrusion():
+def test_parking_activity_never_triggers_in_surveillance():
+    # Parking cameras run in the parking service; the surveillance
+    # classifier must not treat "parking activity" as a trigger.
     classifier = _classifier()
-    assert classifier.should_classify(
-        'parking-camera',
+    assert not classifier.should_classify(
+        'camera',
         1,
         'person',
         has_intrusion=False,

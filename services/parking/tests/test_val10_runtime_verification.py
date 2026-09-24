@@ -5,8 +5,9 @@ from datetime import datetime, timedelta, timezone
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from app.models import Camera, ParkingSpace, DetectedPlate, VehicleProfile, ParkingActivityLog, User, UserRole
-from app.services.auth import create_access_token
+from app.models import Camera, ParkingSpace, DetectedPlate, VehicleProfile, ParkingActivityLog
+from support.identity import User, UserRole
+from support.identity import create_access_token
 from app.services.parking_service import assign_space, release_space
 from app.services.parking_occupancy_service import apply_occupancy_tick, SlotTransition
 
@@ -22,8 +23,6 @@ async def admin_val10(db_session):
         role=UserRole.ADMIN.value,
         is_active=True,
     )
-    db_session.add(user)
-    await db_session.commit()
     return user
 
 
@@ -38,8 +37,6 @@ async def user_val10_b(db_session):
         role=UserRole.OPERATOR.value,
         is_active=True,
     )
-    db_session.add(user)
-    await db_session.commit()
     return user
 
 
@@ -76,7 +73,7 @@ async def test_val10_steps_3_4_6_slot_mapping_preview_stats(client_a, sample_vid
         "status": "active",
         "is_active": True,
     }
-    res_cam = await client_a.post("/api/v1/cameras/", json=cam_data)
+    res_cam = await client_a.post("/api/v1/parking/cameras", json=cam_data)
     assert res_cam.status_code in (200, 201), res_cam.text
     cam_id = res_cam.json()["id"]
 
@@ -120,7 +117,7 @@ async def test_val10_steps_3_4_6_slot_mapping_preview_stats(client_a, sample_vid
 async def test_val10_step_9_tenant_isolation(client_a, client_b):
     # Create camera on tenant A
     cam_data = {"name": "Tenant A Cam", "location": "Lot A", "stream_url": "rtsp://203.0.113.10/live", "role": "parking", "is_active": True}
-    res_cam = await client_a.post("/api/v1/cameras/", json=cam_data)
+    res_cam = await client_a.post("/api/v1/parking/cameras", json=cam_data)
     assert res_cam.status_code in (200, 201), res_cam.text
     cam_id = res_cam.json()["id"]
 
@@ -219,7 +216,7 @@ async def test_val10_step_10_vision_checkout(app_with_db, db_session):
 async def test_val10_step_11_remap_safety_409(client_a, db_session, admin_val10):
     # Create camera
     cam_data = {"name": "Remap Safety Cam", "location": "Lot B", "stream_url": "rtsp://203.0.113.10/live", "role": "parking", "is_active": True}
-    res_cam = await client_a.post("/api/v1/cameras/", json=cam_data)
+    res_cam = await client_a.post("/api/v1/parking/cameras", json=cam_data)
     assert res_cam.status_code in (200, 201), res_cam.text
     cam_id = res_cam.json()["id"]
 

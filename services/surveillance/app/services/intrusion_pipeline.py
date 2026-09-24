@@ -13,14 +13,9 @@ from app.config import get_settings
 from app.detection.events import RoiEventReporter
 from argus_vision.geometry import CameraCalibration, CameraGeometry
 from argus_vision.roi import IntrusionEvent, RoiIntrusionFilter
-from app.models import Alert
 from app.services.authorization import authorization_registry
-from app.services.gate_ocr import GateOcrTrigger
 from argus_vision.intent import IntentResult, classify_intent
 from app.services.intent_persistence import save_track_and_intent
-from app.services.parking_anomaly import parking_anomaly_detector
-from app.services.parking_occupancy import SlotReading, SlotTransition
-from app.services.parking_occupancy_service import ParkingOccupancyStage
 from app.services.risk_engine import RiskEngine, RiskEvent
 from argus_vision.tracker import MultiObjectTracker
 from argus_vision.trajectory import TrajectoryAccumulator, TrajectoryFeatures
@@ -34,9 +29,6 @@ class PipelineResult:
     tracked_objects: list[dict]
     intrusion_events: list[IntrusionEvent]
     intent_events: list[IntentResult] = field(default_factory=list)
-    slot_readings: list[SlotReading] = field(default_factory=list)
-    slot_transitions: list[SlotTransition] = field(default_factory=list)
-    parking_anomaly_alerts: list[Alert] = field(default_factory=list)
     risk_events: list[RiskEvent] = field(default_factory=list)
     zones: list[dict] = field(default_factory=list)
     risk_summary: dict = field(default_factory=dict)
@@ -44,9 +36,6 @@ class PipelineResult:
 
     def intrusion_payload(self) -> list[dict]:
         return [event.to_dict() for event in self.intrusion_events]
-
-    def slot_payload(self) -> list[dict]:
-        return [reading.to_dict() for reading in self.slot_readings]
 
     def risk_payload(self) -> list[dict]:
         return [event.to_dict() for event in self.risk_events]
@@ -91,12 +80,6 @@ class IntrusionPipeline:
             tenant_id=self._tenant_id,
             geometry=self._geometry,
         )
-        self._gate_ocr = GateOcrTrigger(camera_id=self._camera_id, tenant_id=tenant_id)
-        self._parking_occupancy = (
-            ParkingOccupancyStage(self._camera_id, tenant_id)
-            if camera_role == 'parking'
-            else None
-        )
         self._allowed_classes = {
             str(item).strip().lower()
             for item in settings.ALLOWED_CLASSES
@@ -120,20 +103,7 @@ class IntrusionPipeline:
         return self._geometry
 
     def bind_loop(self, loop) -> None:
-        """Give async side-effects (gate OCR) the loop that owns this stream.
-
-        ``process`` runs in a worker thread, so anything that needs to schedule
-        coroutines must be told which loop to hand them to.
-        """
-        self._gate_ocr.bind_loop(loop)
-
-    def update_gate(self, role: Optional[str], gate_roi) -> None:
-        """Hot-swap the camera role / gate polygon used by plate OCR."""
-        self._camera_role = (role or "surveillance").lower()
-        self._gate_ocr.update_meta(self._camera_role, gate_roi)
-
-    def gate_ocr_status(self) -> dict:
-        return self._gate_ocr.status()
+        """Kept for API symmetry; the surveillance pipeline has no async stages."""
 
     def update_calibration(self, calibration: Optional[dict]) -> None:
         """Hot-swap camera calibration (called when the camera record changes)."""
@@ -186,9 +156,7 @@ class IntrusionPipeline:
 
         # Trajectory accumulation + intent classification
         intent_events: list[IntentResult] = []
-        parking_anomaly_alerts: list[Alert] = []
-        ended_tracks = self._trajectory.update(tracked)
-        for features in ended_tracks:
+        for features in self._trajectory.update(tracked):
             intent = classify_intent(features)
             intent_events.append(intent)
             save_track_and_intent(
@@ -197,43 +165,11 @@ class IntrusionPipeline:
                 intent=intent,
                 tenant_id=self._tenant_id,
             )
-            if self._parking_occupancy is not None:
-                parking_anomaly_alerts.extend(
-                    parking_anomaly_detector.detect_lane_loitering(
-                        camera_id=self._camera_id,
-                        tenant_id=self._tenant_id,
-                        features=features,
-                        intent_type=intent.intent_type,
-                        now=event_time,
-                    )
-                )
-                parking_anomaly_alerts.extend(
-                    parking_anomaly_detector.detect_car_hopping(
-                        camera_id=self._camera_id,
-                        tenant_id=self._tenant_id,
-                        features=features,
-                        slots=self._parking_occupancy.slots(),
-                        frame_shape=frame.shape,
-                        now=event_time,
-                    )
-                )
-
-        # Smart parking: gate ROI collision → OCR once per track_id
-        self._gate_ocr.process_frame(tracked, frame)
-        slot_readings: list[SlotReading] = []
-        slot_transitions: list[SlotTransition] = []
-        if self._parking_occupancy is not None:
-            tick = self._parking_occupancy.process(frame, tracked)
-            slot_readings = tick.readings
-            slot_transitions = tick.transitions
 
         return PipelineResult(
             tracked_objects=tracked,
             intrusion_events=intrusion_events,
             intent_events=intent_events,
-            slot_readings=slot_readings,
-            slot_transitions=slot_transitions,
-            parking_anomaly_alerts=parking_anomaly_alerts,
             risk_events=risk_events,
             zones=self._roi_filter.zones_payload(event_time, arm_mode),
             risk_summary=self._risk.summary(),
@@ -256,6 +192,3 @@ class IntrusionPipeline:
         self._risk.reset()
         self._reporter.reset(camera_id=self._camera_id)
         self._trajectory.reset()
-        self._gate_ocr.reset()
-        if self._parking_occupancy is not None:
-            self._parking_occupancy.reset()

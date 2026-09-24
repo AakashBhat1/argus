@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -11,14 +12,15 @@ from app.config import get_settings
 from app.database import get_session_factory, init_db
 from app.detection import detector
 from app.models import Camera
-from app.routers import alerts, analytics, cameras, crime, detections, intents, metrics, roboflow, security, streams, videos, zones, auth, parking, parking_chat
-from app.services.auth import authenticate_websocket
+from app.routers import alerts, analytics, cameras, crime, detections, intents, internal, metrics, roboflow, security, streams, videos, zones, auth
+from app.services.auth import authenticate_websocket, jwks_document, signing_key
 from argus_vision.inference_worker import InferenceWorkerPool
 from argus_vision.metrics import inference_metrics
 from app.services.roboflow_classifier import roboflow_classifier
 from app.services.crime_classifier import crime_classifier
 from app.services.stream_manager import stream_manager
 from app.services.websocket_manager import ws_manager
+from app.services.outbox import outbox_runner
 from app.services.retention import retention_worker
 
 logging.basicConfig(
@@ -27,7 +29,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-NON_CAMERA_CHANNELS = frozenset({"global", "alerts", "parking"})
+NON_CAMERA_CHANNELS = frozenset({"global", "alerts"})
 
 # ---------------------------------------------------------------------------
 # Inference Worker Pool (global, started in lifespan)
@@ -41,6 +43,9 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME}")
+
+    # Fail fast on missing token-signing keys (ephemeral only in DEBUG).
+    signing_key()
 
     # Load and validate model weights during application startup, not import.
     model_info = detector.initialize().get_model_info()
@@ -78,10 +83,14 @@ async def lifespan(app: FastAPI):
     # Start data retention worker
     retention_task = asyncio.create_task(retention_worker())
 
+    # Deliver queued events to peer services (parking).
+    outbox_runner.start()
+
     yield
 
     # Shutdown
     logger.info("Shutting down, stopping all streams...")
+    await outbox_runner.stop()
     retention_task.cancel()
     await stream_manager.stop_all()
     await inference_pool.shutdown()
@@ -117,9 +126,14 @@ app.include_router(crime.router, prefix="/api/v1")
 app.include_router(videos.router, prefix="/api/v1")
 app.include_router(zones.router, prefix="/api/v1")
 app.include_router(intents.router, prefix="/api/v1")
-app.include_router(parking.router, prefix="/api/v1")
-app.include_router(parking_chat.router, prefix="/api/v1")
 app.include_router(security.router, prefix="/api/v1")
+app.include_router(internal.router)
+
+
+@app.get("/.well-known/jwks.json", include_in_schema=False)
+async def jwks_endpoint():
+    """Public keys other services use to verify access tokens."""
+    return JSONResponse(jwks_document(), headers={"Cache-Control": "public, max-age=300"})
 
 
 @app.get("/api/v1/health")

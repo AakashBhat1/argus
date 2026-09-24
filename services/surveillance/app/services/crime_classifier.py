@@ -135,7 +135,8 @@ class CrimeClassifier:
             c.strip().lower() for c in settings.CRIME_CLASSIFIER_TRIGGER_CLASSES
         }
         self._cooldown_sec = settings.CRIME_CLASSIFIER_COOLDOWN_SEC
-        self._trigger_on_parking = settings.CRIME_CLASSIFIER_TRIGGER_ON_PARKING
+        # Parking cameras run in the parking service; no parking trigger here.
+        self._trigger_on_parking = False
         self._device_name = settings.CRIME_CLASSIFIER_DEVICE
         self._cache_dir = _backend_root() / settings.CRIME_CLASSIFIER_CACHE_DIR
 

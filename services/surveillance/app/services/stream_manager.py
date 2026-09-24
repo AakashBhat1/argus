@@ -11,11 +11,6 @@ from app.config import get_settings
 from app import database
 from app.models import Alert, AlertSeverity, Camera, Detection
 from app.services.intrusion_pipeline import IntrusionPipeline, PipelineResult
-from app.services.parking_occupancy_service import (
-    apply_occupancy_tick,
-    persist_anomaly_alerts,
-    warm_camera_slots,
-)
 from app.services.crime_classifier import crime_classifier, risk_trigger as crime_risk_trigger
 from app.services.risk_engine import RiskEvent
 from app.services.roboflow_classifier import roboflow_classifier
@@ -95,14 +90,6 @@ class VideoStream:
         if self._running:
             return True
 
-        if self.camera_role == 'parking':
-            try:
-                await warm_camera_slots(str(self.camera_id), self.tenant_id)
-            except Exception:
-                logger.exception(
-                    'Failed to warm parking slots for camera %s', self.camera_id
-                )
-
         # Preflight validation prevents false-positive "started" responses.
         # Opening an RTSP source can block for seconds, so keep it off the loop.
         loop = asyncio.get_running_loop()
@@ -163,9 +150,6 @@ class VideoStream:
     def update_calibration(self, calibration: Optional[dict]) -> None:
         self._pipeline.update_calibration(calibration)
 
-    def update_gate(self, role: Optional[str], gate_roi) -> None:
-        self._pipeline.update_gate(role, gate_roi)
-
     @property
     def pipeline(self) -> IntrusionPipeline:
         return self._pipeline
@@ -203,7 +187,7 @@ class VideoStream:
 
     async def _process_loop(self):
         loop = asyncio.get_event_loop()
-        # The pipeline executes in a worker thread; give it this loop so gate
+        # The pipeline executes in a worker thread; give it this loop so
         # OCR can schedule its async work back here.
         bind_loop = getattr(self._pipeline, "bind_loop", None)
         if callable(bind_loop):
@@ -307,41 +291,16 @@ class VideoStream:
                         self._roboflow_enrich(frame.copy(), tracked, intrusion_events)
                     )
 
-                if pipeline_result.slot_readings:
-                    asyncio.create_task(
-                        apply_occupancy_tick(
-                            str(self.camera_id),
-                            self.tenant_id,
-                            pipeline_result.slot_transitions,
-                        )
-                    )
-                if pipeline_result.parking_anomaly_alerts:
-                    asyncio.create_task(
-                        persist_anomaly_alerts(
-                            pipeline_result.parking_anomaly_alerts
-                        )
-                    )
-
-                # Fire ViT classification for intrusion, parking activity or
-                # elevated risk (close contact / suspicious behaviour).
+                # Fire ViT classification for intrusion or elevated risk
+                # (close contact / suspicious behaviour).
                 crime_results_payload: list[dict] = []
-                parking_trigger = (
-                    self.camera_role == 'parking'
-                    and any(
-                        str(obj.get('class_label', '')).lower() == 'person'
-                        for obj in tracked
-                    )
-                )
                 risk_trigger = any(crime_risk_trigger(obj) for obj in tracked)
-                if crime_classifier.enabled and (
-                    intrusion_events or parking_trigger or risk_trigger
-                ):
+                if crime_classifier.enabled and (intrusion_events or risk_trigger):
                     asyncio.create_task(
                         self._crime_classify(
                             frame.copy(),
                             tracked,
                             intrusion_events,
-                            parking_activity=parking_trigger,
                         )
                     )
 
@@ -362,7 +321,6 @@ class VideoStream:
                     "arm_mode": pipeline_result.arm_mode,
                     "ground_plane_calibrated": self._pipeline.geometry.has_ground_plane,
                     "crime_classifications": crime_results_payload,
-                    "parking_slots": pipeline_result.slot_payload(),
                     "fps": round(self._fps, 1),
                     "frame_width": int(frame.shape[1]),
                     "frame_height": int(frame.shape[0]),
@@ -651,7 +609,6 @@ class VideoStream:
         frame: np.ndarray,
         tracked_objects: list[dict],
         intrusion_events: list[IntrusionEvent],
-        parking_activity: bool = False,
     ):
         """Run ViT crime classification in background, store results and alert on crimes."""
         try:
@@ -659,7 +616,6 @@ class VideoStream:
                 frame,
                 tracked_objects,
                 str(self.camera_id),
-                parking_activity=parking_activity,
             )
             if not results:
                 return
@@ -761,7 +717,6 @@ class VideoStream:
             "active_tracks": len(self._last_detections),
             "uptime_seconds": round(time.time() - self._start_time, 1) if self._running else 0,
             "current_frame_skip": self._current_frame_skip,
-            "gate_ocr": self._pipeline.gate_ocr_status(),
         }
 
 
@@ -899,13 +854,6 @@ class StreamManager:
         if not stream:
             return False
         stream.update_calibration(calibration)
-        return True
-
-    def update_camera_gate(self, camera_id: str, role: Optional[str], gate_roi) -> bool:
-        stream = self._streams.get(camera_id)
-        if not stream:
-            return False
-        stream.update_gate(role, gate_roi)
         return True
 
     def get_stream(self, camera_id: str) -> Optional[VideoStream]:

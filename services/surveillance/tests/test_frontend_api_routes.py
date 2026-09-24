@@ -91,6 +91,11 @@ def extract_api_ts_endpoints(content_or_path: Path | str) -> list[str]:
     return endpoints
 
 
+# Frontend calls under these prefixes are served by the parking service
+# (routed by the gateway); they are checked by the parking test suite.
+PARKING_PREFIXES = ("/parking",)
+
+
 def validate_endpoints_against_openapi(endpoints: list[str]) -> list[tuple[str, str]]:
     openapi = app.openapi()
     openapi_paths = set(openapi.get("paths", {}).keys())
@@ -123,8 +128,11 @@ def test_frontend_api_routes_match_openapi():
     api_ts_path = repo_root / "frontend" / "src" / "lib" / "api.ts"
     assert api_ts_path.exists(), f"api.ts not found at {api_ts_path}"
 
-    endpoints = extract_api_ts_endpoints(api_ts_path)
-    assert len(endpoints) >= 39, f"Expected at least 39 endpoints extracted from api.ts, got {len(endpoints)}"
+    endpoints = [
+        ep for ep in extract_api_ts_endpoints(api_ts_path)
+        if not ep.startswith(PARKING_PREFIXES)
+    ]
+    assert len(endpoints) >= 25, f"Expected at least 25 surveillance endpoints in api.ts, got {len(endpoints)}"
 
     missing_routes = validate_endpoints_against_openapi(endpoints)
     assert not missing_routes, f"The following frontend api.ts paths do not exist in FastAPI OpenAPI schema: {missing_routes}"

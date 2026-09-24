@@ -43,7 +43,7 @@ class TestWebSocketAuthentication:
         from datetime import timedelta
 
         token = create_access_token(
-            data={"sub": admin_user.username, "role": admin_user.role},
+            data={"sub": admin_user.username, "role": admin_user.role, "tenant_id": admin_user.tenant_id},
             expires_delta=timedelta(minutes=5),
         )
         client = TestClient(app_with_db)
@@ -57,7 +57,7 @@ class TestWebSocketAuthentication:
         from starlette.testclient import TestClient
         from app.services.auth import create_access_token
 
-        token = create_access_token(data={"sub": admin_user.username})
+        token = create_access_token(data={"sub": admin_user.username, "tenant_id": admin_user.tenant_id})
         client = TestClient(app_with_db, raise_server_exceptions=False)
         with pytest.raises(Exception):
             with client.websocket_connect(f"/ws/global?token={token}") as ws:
@@ -73,7 +73,7 @@ class TestWebSocketAuthentication:
         from datetime import timedelta
 
         expired_token = create_access_token(
-            data={"sub": admin_user.username},
+            data={"sub": admin_user.username, "tenant_id": admin_user.tenant_id},
             expires_delta=timedelta(minutes=-1),
         )
         client = TestClient(app_with_db, raise_server_exceptions=False)
