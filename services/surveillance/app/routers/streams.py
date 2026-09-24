@@ -5,18 +5,47 @@ import platform
 from pathlib import Path
 
 import cv2
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.database import get_db
 from app.models import Camera, CameraStatus, User
 from app.services.stream_manager import stream_manager, _resolve_stream_source, _open_capture
 from app.services.auth import get_current_active_user, require_admin
+from argus_common.web_auth import CsrfError, check_playback_request
 
 router = APIRouter(prefix="/streams", tags=["streams"])
 logger = logging.getLogger(__name__)
+
+
+@router.api_route(
+    "/playback-auth", methods=["GET", "HEAD", "POST", "PATCH", "DELETE"], include_in_schema=False
+)
+async def playback_auth(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Edge auth_request hook for WebRTC playback (see deploy/nginx).
+
+    204 when the caller's tenant owns the camera in the proxied WHEP path,
+    so the edge relays the request to MediaMTX with its viewer account.
+    """
+    try:
+        camera_id = check_playback_request(request, get_settings().CORS_ORIGINS)
+    except CsrfError as exc:
+        raise HTTPException(status_code=403, detail=f"CSRF check failed: {exc}") from exc
+    if camera_id is None:
+        raise HTTPException(status_code=403, detail="Not a playback request")
+    owned = await db.scalar(
+        select(Camera.id).where(Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id)
+    )
+    if owned is None:
+        raise HTTPException(status_code=403, detail="Camera not available")
+    return Response(status_code=204)
 
 
 @router.post("/{camera_id}/start")

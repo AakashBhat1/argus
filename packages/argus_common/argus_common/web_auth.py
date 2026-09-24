@@ -18,6 +18,7 @@ Two ways to present an access token:
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from typing import Iterable, Literal, Optional
@@ -100,9 +101,13 @@ def origin_allowed(origin: Optional[str], host: Optional[str], allowed: Iterable
     return any(_origin_key(entry) == key for entry in allowed)
 
 
-def check_same_origin(conn: HTTPConnection, allowed: Iterable[str] = ()) -> None:
-    """Raise ``CsrfError`` unless a cookie-authenticated request is ours."""
-    method = conn.scope.get("method", "GET")
+def check_same_origin(conn: HTTPConnection, allowed: Iterable[str] = (), method: Optional[str] = None) -> None:
+    """Raise ``CsrfError`` unless a cookie-authenticated request is ours.
+
+    ``method`` overrides the request's own, for a check made on behalf of
+    another request (the edge's auth subrequests are always GET).
+    """
+    method = (method or conn.scope.get("method", "GET")).upper()
     if method in SAFE_METHODS:
         return
     if conn.headers.get(CSRF_HEADER) != "1":
@@ -179,3 +184,44 @@ async def hold_until_expiry(websocket: WebSocket, expires_at: float) -> None:
             await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
         except asyncio.TimeoutError:
             continue
+
+
+# -- media playback ---------------------------------------------------------
+#
+# The edge asks the owning service before relaying a browser's WebRTC (WHEP)
+# request to MediaMTX (nginx auth_request), passing the normalised request
+# path. MediaMTX itself only trusts the edge's viewer account.
+
+STREAM_URI_HEADER = "X-Original-URI"
+STREAM_METHOD_HEADER = "X-Original-Method"
+_CAMERA_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+
+def check_playback_request(conn: HTTPConnection, allowed_origins: Iterable[str] = ()) -> Optional[str]:
+    """Camera id of the playback request the edge is asking about.
+
+    Cookie-authenticated playback follows the same CSRF rules as the
+    request being authorised (a WHEP offer is a POST). Returns None for
+    anything that is not a WHEP request; raises ``CsrfError``.
+    """
+    if bearer_token(conn) is None:
+        check_same_origin(conn, allowed_origins, method=conn.headers.get(STREAM_METHOD_HEADER, "GET"))
+    return stream_camera_id(conn.headers.get(STREAM_URI_HEADER, ""))
+
+
+def stream_camera_id(original_uri: str) -> Optional[str]:
+    """Camera id of ``/<prefix>/<camera>/whep`` or ``.../whep/<session>``.
+
+    Anything else (MediaMTX's HTML reader, nested paths, odd characters) is
+    refused, so the path checked is exactly the path MediaMTX will serve.
+    """
+    parts = urlsplit(original_uri or "").path.split("/")
+    if len(parts) not in (4, 5) or parts[0] != "" or parts[3] != "whep":
+        return None
+    camera_id = parts[2]
+    if not _CAMERA_ID.fullmatch(camera_id):
+        return None
+    if len(parts) == 5 and not _SESSION_ID.fullmatch(parts[4]):
+        return None
+    return camera_id

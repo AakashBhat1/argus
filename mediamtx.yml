@@ -1,20 +1,24 @@
 # MediaMTX — RTSP ingest and WebRTC playback.
 #
-# Passwords below are placeholders overridden by environment variables in
-# the compose files (MTX_AUTHINTERNALUSERS_<n>_PASS); the stack refuses to
-# start without them.
+# Passwords below are placeholders replaced by environment variables in the
+# compose files (MTX_AUTHINTERNALUSERS_<n>_PASS); the stack refuses to start
+# without them. MediaMTX >= 1.21 is required: 1.9 silently ignored these
+# overrides, leaving the placeholders as the real passwords.
 
 api: yes
 apiAddress: :9997
 metrics: no
 
 rtspAddress: :8554
+# Relays and analytics use RTSP over TCP (the only RTSP port published).
+rtspTransports: [tcp]
 webrtc: yes
 webrtcAddress: :8889
 # Only what the dashboard needs.
 rtmp: no
 hls: no
 srt: no
+moq: no
 
 authInternalUsers:
   # 0: backend stream registration (control API).
@@ -32,12 +36,13 @@ authInternalUsers:
     pass: replaced-by-env
     permissions:
       - action: read
-  # Browser WebRTC playback. The public gateway only exposes WHEP under
-  # /stream/, behind the dashboard; restrict further per deployment.
-  - user: any
+  # 3: the edge proxies, relaying browsers' WebRTC playback after the owning
+  # service authorised the user for that camera. Nobody reads anonymously:
+  # not over WebRTC, not over the published RTSP port.
+  - user: mtx_viewer
+    pass: replaced-by-env
     permissions:
       - action: read
-        path: ""
 
 paths:
   all_others:

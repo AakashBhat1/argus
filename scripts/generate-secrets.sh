@@ -39,6 +39,17 @@ ensure_env_var .env PARKING_POSTGRES_PASSWORD  "$(rand 24)"
 ensure_env_var .env MEDIAMTX_API_PASSWORD      "$(rand 16)"
 ensure_env_var .env MEDIAMTX_PUBLISH_PASSWORD  "$(rand 16)"
 ensure_env_var .env MEDIAMTX_READ_PASSWORD     "$(rand 16)"
+ensure_env_var .env MEDIAMTX_VIEWER_PASSWORD   "$(rand 16)"
+# The edge presents the viewer account to MediaMTX as a Basic header; always
+# re-derived from the password so the two cannot drift apart.
+VIEWER_PASSWORD="$(grep '^MEDIAMTX_VIEWER_PASSWORD=' .env | head -1 | cut -d= -f2-)"
+VIEWER_BASIC="$(printf 'mtx_viewer:%s' "$VIEWER_PASSWORD" | base64 | tr -d '\n')"
+if grep -q '^MEDIAMTX_VIEWER_BASIC=' .env; then
+  sed -i "s|^MEDIAMTX_VIEWER_BASIC=.*|MEDIAMTX_VIEWER_BASIC=${VIEWER_BASIC}|" .env
+else
+  echo "MEDIAMTX_VIEWER_BASIC=${VIEWER_BASIC}" >> .env
+fi
+echo "  MEDIAMTX_VIEWER_BASIC: derived"
 # Public IP/domain advertised in WebRTC ICE candidates; setup-tls.sh sets
 # this to the domain. Until then, default to this host's public IP.
 if ! grep -q '^MEDIAMTX_PUBLIC_HOST=' .env; then

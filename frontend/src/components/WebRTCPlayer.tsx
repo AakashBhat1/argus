@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Video } from "lucide-react";
+import { CSRF_HEADERS, ensureFreshSession } from "@/lib/session";
 
 interface Props {
   cameraId: string;
@@ -40,11 +41,15 @@ export default function WebRTCPlayer({ cameraId, service = "surveillance", class
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        // MediaMTX WHEP endpoint (path uses camera_id, not camera_name)
+        // MediaMTX WHEP endpoint (path uses camera_id, not camera_name).
+        // The edge authorises playback with the session cookie first.
+        await ensureFreshSession();
         const base = service === "parking" ? PARKING_MEDIA_BASE : SURVEILLANCE_MEDIA_BASE;
         const response = await fetch(`${base.replace(/\/$/, "")}/${cameraId}/whep`, {
           method: "POST",
+          credentials: "include",
           headers: {
+            ...CSRF_HEADERS,
             "Content-Type": "application/sdp",
           },
           body: offer.sdp,

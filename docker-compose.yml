@@ -173,11 +173,12 @@ services:
 
   mediamtx:
     <<: *hardening
-    image: bluenviron/mediamtx:1.9.3
+    image: bluenviron/mediamtx:1.21.1
     environment:
       MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_API_PASSWORD}
       MTX_AUTHINTERNALUSERS_1_PASS: ${MEDIAMTX_PUBLISH_PASSWORD:?set MEDIAMTX_PUBLISH_PASSWORD}
       MTX_AUTHINTERNALUSERS_2_PASS: ${MEDIAMTX_READ_PASSWORD}
+      MTX_AUTHINTERNALUSERS_3_PASS: ${MEDIAMTX_VIEWER_PASSWORD:?set MEDIAMTX_VIEWER_PASSWORD (scripts/generate-secrets.sh)}
       MTX_WEBRTCADDITIONALHOSTS: ${MEDIAMTX_PUBLIC_HOST:-127.0.0.1}
     volumes: [./mediamtx.yml:/mediamtx.yml:ro]
     ports:
@@ -230,6 +231,8 @@ services:
       # Single host: the gateway reaches parking through this same edge.
       PARKING_EDGE: edge:8444
       PARKING_EDGE_NAME: edge
+      # base64("mtx_viewer:<MEDIAMTX_VIEWER_PASSWORD>"), written by generate-secrets.sh.
+      MEDIAMTX_VIEWER_BASIC: ${MEDIAMTX_VIEWER_BASIC:?set MEDIAMTX_VIEWER_BASIC (scripts/generate-secrets.sh)}
     volumes:
       - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./deploy/nginx/templates:/etc/nginx/templates:ro

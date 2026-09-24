@@ -19,6 +19,7 @@ from argus_common.web_auth import (
     hold_until_expiry,
     http_credential,
     origin_allowed,
+    stream_camera_id,
     websocket_credential,
 )
 
@@ -151,3 +152,45 @@ def test_socket_closes_when_the_token_expires(client):
         with pytest.raises(WebSocketDisconnect) as exc:
             ws.receive_text()
     assert exc.value.code == WS_AUTH_CLOSE_CODE
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("/stream/3f2a-cam_1/whep", "3f2a-cam_1"),
+        ("/stream-parking/gate-a/whep/1a2b-3c", "gate-a"),
+        ("/stream/cam/whep?x=1", "cam"),
+        ("/stream/cam/", None),  # MediaMTX's HTML reader page
+        ("/stream/cam", None),
+        ("/stream/camA/camB/whep", None),  # a different MediaMTX path
+        ("/stream/../camB/whep", None),
+        ("/stream/cam%2fx/whep", None),
+        ("/stream/cam.x/whep", None),
+        ("/stream//whep", None),
+        ("/stream/cam/whep/sess/extra", None),
+        ("", None),
+    ],
+)
+def test_stream_camera_id(uri, expected):
+    assert stream_camera_id(uri) == expected
+
+
+def test_playback_checks_apply_to_the_original_method():
+    from starlette.requests import Request
+
+    from argus_common.web_auth import STREAM_METHOD_HEADER, STREAM_URI_HEADER, check_playback_request
+
+    def request(headers):
+        raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+        return Request({"type": "http", "method": "GET", "headers": raw})
+
+    whep = {STREAM_URI_HEADER: "/stream/cam-1/whep", "cookie": f"{ACCESS_COOKIE}=t", "host": "argus.example.in"}
+    # The edge's subrequest is a GET, but it authorises the browser's POST.
+    with pytest.raises(CsrfError):
+        check_playback_request(request({**whep, STREAM_METHOD_HEADER: "POST"}))
+    with pytest.raises(CsrfError):
+        check_playback_request(request({**whep, STREAM_METHOD_HEADER: "POST", CSRF_HEADER: "1", "origin": "https://evil.example"}))
+    ours = {**whep, STREAM_METHOD_HEADER: "POST", CSRF_HEADER: "1", "origin": "https://argus.example.in"}
+    assert check_playback_request(request(ours)) == "cam-1"
+    # API clients with a bearer token are not subject to CSRF.
+    assert check_playback_request(request({STREAM_URI_HEADER: "/stream/cam-1/whep", STREAM_METHOD_HEADER: "POST", "authorization": "Bearer x"})) == "cam-1"

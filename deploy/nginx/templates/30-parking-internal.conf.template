@@ -45,8 +45,13 @@ server {
         proxy_set_header X-Argus-Client-Service "";
         proxy_pass http://parking_api;
     }
+    # WHEP playback relayed by the gateway after parking authorised it
+    # (/api/v1/parking/streams/playback-auth); MediaMTX sees the viewer
+    # account only.
     location /stream/ {
         if ($argus_client_cn != "gateway") { return 403; }
+        proxy_set_header Authorization "Basic ${MEDIAMTX_VIEWER_BASIC}";
+        proxy_set_header Cookie "";
         proxy_pass http://${PARKING_MEDIAMTX_UPSTREAM}/;
     }
     location / { return 404; }

@@ -68,11 +68,26 @@ server {
         include /etc/nginx/argus.d/05-gateway-to-parking.snippet;
         proxy_pass https://${PARKING_EDGE};
     }
-    location /stream-parking/ {
+    # Parking cameras' WebRTC playback: parking decides, over mTLS.
+    location = /_auth/stream-parking {
+        internal;
         include /etc/nginx/snippets/proxy-headers.conf;
         include /etc/nginx/argus.d/05-gateway-to-parking.snippet;
-        proxy_pass https://${PARKING_EDGE}/stream/;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI /stream-parking/$argus_parking_stream;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_pass https://${PARKING_EDGE}/api/v1/parking/streams/playback-auth;
     }
+    location ~ "^/stream-parking/(?<argus_parking_stream>[A-Za-z0-9_-]{1,64}/whep(/[A-Za-z0-9_-]{1,128})?)$" {
+        auth_request /_auth/stream-parking;
+        include /etc/nginx/snippets/proxy-headers.conf;
+        include /etc/nginx/argus.d/05-gateway-to-parking.snippet;
+        proxy_set_header Cookie "";
+        rewrite ^/stream-parking/(.*)$ /stream/$1 break;
+        proxy_pass https://${PARKING_EDGE};
+    }
+    location /stream-parking/ { return 404; }
 
     location /api/ {
         limit_req zone=argus_api burst=60 nodelay;
@@ -89,11 +104,29 @@ server {
         include /etc/nginx/snippets/proxy-headers.conf;
         proxy_pass http://surveillance_api;
     }
-    # MediaMTX WHEP signalling for surveillance cameras.
-    location /stream/ {
+    # WebRTC (WHEP) playback of surveillance cameras. Only WHEP paths are
+    # relayed, and only after surveillance confirms the signed-in user's
+    # tenant owns the camera (the path checked is the normalised path
+    # MediaMTX serves). MediaMTX sees the edge's viewer account, never the
+    # browser's cookies.
+    location = /_auth/stream {
+        internal;
         include /etc/nginx/snippets/proxy-headers.conf;
-        proxy_pass http://surveillance_media/;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI /stream/$argus_stream;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_pass http://surveillance_api/api/v1/streams/playback-auth;
     }
+    location ~ "^/stream/(?<argus_stream>[A-Za-z0-9_-]{1,64}/whep(/[A-Za-z0-9_-]{1,128})?)$" {
+        auth_request /_auth/stream;
+        include /etc/nginx/snippets/proxy-headers.conf;
+        proxy_set_header Authorization "Basic ${MEDIAMTX_VIEWER_BASIC}";
+        proxy_set_header Cookie "";
+        rewrite ^/stream/(.*)$ /$1 break;
+        proxy_pass http://surveillance_media;
+    }
+    location /stream/ { return 404; }
     location / {
         include /etc/nginx/snippets/proxy-headers.conf;
         proxy_pass http://argus_frontend;

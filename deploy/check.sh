@@ -24,6 +24,7 @@ trap cleanup EXIT
 # Placeholders only so the `${VAR:?}` guards pass; no stack is started.
 export POSTGRES_PASSWORD=check PARKING_POSTGRES_PASSWORD=check \
   MEDIAMTX_API_PASSWORD=check MEDIAMTX_PUBLISH_PASSWORD=check MEDIAMTX_READ_PASSWORD=check \
+  MEDIAMTX_VIEWER_PASSWORD=check MEDIAMTX_VIEWER_BASIC=bXR4X3ZpZXdlcjpjaGVjaw== \
   PARKING_EDGE=parking-edge:8443 SURVEILLANCE_EDGE=surveillance-edge:8443
 
 for f in services/surveillance/.env services/parking/.env; do

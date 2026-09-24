@@ -79,6 +79,10 @@ class WebSocketHub:
 
     async def broadcast_detections(self, camera_id: str, data: dict, tenant_id: str = "1") -> None:
         message = json.dumps({"type": "detections", "data": data})
+        logger.debug(
+            "WS detections: tenant=%s camera=%s dets=%d size=%.1fKB",
+            tenant_id, camera_id, len(data.get("detections", [])), len(message) / 1024,
+        )
         await self._send(tenant_id, (camera_id, GLOBAL_CHANNEL), message)
 
     async def broadcast_alert(self, data: dict, tenant_id: str = "1") -> None:
