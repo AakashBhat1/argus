@@ -14,6 +14,7 @@ from app.detection import detector
 from app.models import Camera
 from app.routers import alerts, analytics, cameras, crime, detections, intents, internal, metrics, roboflow, security, streams, videos, zones, auth
 from app.services.auth import authenticate_websocket, jwks_document, signing_key
+from app.services.camera_secrets import camera_secret_box, seal_stored_stream_urls
 from argus_common.web_auth import WS_AUTH_CLOSE_CODE, hold_until_expiry
 from argus_vision.inference_worker import InferenceWorkerPool
 from argus_vision.metrics import inference_metrics
@@ -45,8 +46,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME}")
 
-    # Fail fast on missing token-signing keys (ephemeral only in DEBUG).
+    # Fail fast on missing keys (ephemeral / plaintext only in DEBUG).
     signing_key()
+    camera_secret_box()
 
     # Load and validate model weights during application startup, not import.
     model_info = detector.initialize().get_model_info()
@@ -54,6 +56,7 @@ async def lifespan(app: FastAPI):
     # Initialize database
     await init_db()
     logger.info("Database initialized")
+    await seal_stored_stream_urls(get_session_factory())
 
     # Initialize the inference worker pool
     inference_pool = InferenceWorkerPool(

@@ -124,11 +124,25 @@ class TestTenantIsolation:
     async def test_tenant2_cannot_delete_tenant1_camera(
         self,
         app_with_db,
-        tenant2_user,
+        db_session,
         tenant1_camera,
     ):
-        """RED: tenant-2 user should not delete tenant-1 camera."""
-        token = _token_for(tenant2_user)
+        """A tenant-2 admin (deleting needs admin) must not reach tenant-1 cameras."""
+        import uuid
+
+        from app.models import User, UserRole
+
+        tenant2_admin = User(
+            id=str(uuid.uuid4()),
+            username=f"t2_admin_{uuid.uuid4().hex[:6]}",
+            hashed_password="x",
+            role=UserRole.ADMIN.value,
+            tenant_id="tenant-2",
+            is_active=True,
+        )
+        db_session.add(tenant2_admin)
+        await db_session.flush()
+        token = _token_for(tenant2_admin)
         async with AsyncClient(
             transport=ASGITransport(app=app_with_db),
             base_url="http://test",

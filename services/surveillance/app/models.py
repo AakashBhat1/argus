@@ -9,7 +9,9 @@ from sqlalchemy.orm import relationship
 import enum
 
 from argus_common.events import InboxEventMixin, OutboxEventMixin
+from argus_common.secretbox import SealedString
 from app.database import Base
+from app.services.camera_secrets import STREAM_URL_AAD, camera_secret_box
 from app.utils import utc_now
 
 
@@ -59,7 +61,8 @@ class Camera(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     name = Column(String(255), nullable=False)
     location = Column(String(500), nullable=False)
-    stream_url = Column(String(1000), nullable=False)
+    # Sealed at rest: stream URLs carry the camera's credentials.
+    stream_url = Column(SealedString(camera_secret_box, STREAM_URL_AAD), nullable=False)
     tenant_id = Column(String(36), default="1", index=True)
     status = Column(String(20), default=CameraStatus.INACTIVE.value)
     resolution = Column(String(20), default="1280x720")

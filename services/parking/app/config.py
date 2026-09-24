@@ -56,6 +56,11 @@ class Settings(VisionSettings, ServiceMeshSettings):
     # use Secure, prefixed names unless both run in DEBUG over plain http.
     AUTH_COOKIE_SECURE: bool = True
 
+    # 32-byte key sealing camera credentials in the database (deploy/pki.sh).
+    # Required unless DEBUG. Retired keys (*.key) stay readable for rotation.
+    CAMERA_SECRETS_KEY_FILE: str | None = None
+    CAMERA_SECRETS_PREVIOUS_KEYS_DIR: str | None = None
+
     # -- Peers ---------------------------------------------------------------
     # Internal base URL of the surveillance service (receives parking events).
     SURVEILLANCE_INTERNAL_URL: str | None = None

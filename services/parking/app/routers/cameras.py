@@ -18,6 +18,7 @@ from app.services.auth import Principal, get_current_active_user, require_admin
 from app.services.parking_occupancy_service import invalidate_slots
 from app.services.stream_manager import stream_manager
 from argus_vision.sources import SourceError, open_capture, validate_camera_source
+from argus_common.net import MaskedCredentialsError, restore_masked_credentials
 from argus_common.web_auth import CsrfError, check_playback_request
 
 router = APIRouter(prefix="/parking/cameras", tags=["parking-cameras"])
@@ -119,6 +120,12 @@ async def update_camera(
     camera = await _camera_or_404(db, camera_id, current_user.tenant_id)
     changes = data.model_dump(exclude_unset=True)
     if "stream_url" in changes:
+        # Clients only see masked URLs; one sent back keeps the stored
+        # credentials (same address only).
+        try:
+            changes["stream_url"] = restore_masked_credentials(changes["stream_url"], camera.stream_url)
+        except MaskedCredentialsError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         _validate_source(changes["stream_url"])
     for key, value in changes.items():
         setattr(camera, key, value)

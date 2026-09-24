@@ -11,6 +11,10 @@
 #   <svc>/service.key                 Ed25519 key signing service tokens
 #   <svc>/peers/<peer>.pub.pem        public service keys of its peers
 #   surveillance/auth.key             Ed25519 key signing user access tokens
+#   <svc>/camera-secrets.key          AES-256 key sealing camera credentials in
+#                                     the database (surveillance, parking).
+#                                     BACK IT UP: it is never regenerated, and
+#                                     without it stored camera URLs are lost.
 #   gateway/tls.pem, gateway/tls.key  client cert the public gateway uses to
 #                                     reach parking over mTLS (CN=gateway)
 #   public/fullchain.pem, privkey.pem self-signed placeholder for the public
@@ -107,6 +111,10 @@ bundle() {
   if [[ "$svc" == surveillance ]]; then
     ed25519_key "$dir/auth.key"
     openssl pkey -in "$dir/auth.key" -pubout -out "$dir/auth.pub.pem"
+  fi
+  if [[ "$svc" == surveillance || "$svc" == parking ]] && [[ ! -f "$dir/camera-secrets.key" ]]; then
+    log "Creating camera-secrets key for $svc (back it up)"
+    openssl rand -base64 32 >"$dir/camera-secrets.key"
   fi
 }
 

@@ -27,7 +27,7 @@ import re
 import socket
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
@@ -281,3 +281,53 @@ def redact_url(url: object) -> str:
         rest,
     )
     return f"{parts.scheme}://{netloc}{rest}"
+
+
+REDACTION_MASK = "***"
+_MASKED_PARAM = re.compile(r"(?i)\b(%s)=\*\*\*" % "|".join(_SECRET_KEYS))
+_SECRET_PARAM = re.compile(r"(?i)\b(%s)=([^&;/?#]*)" % "|".join(_SECRET_KEYS))
+
+
+class MaskedCredentialsError(ValueError):
+    """A masked URL was sent back for a different address."""
+
+
+def restore_masked_credentials(submitted: str, current: str) -> str:
+    """Undo the API's redaction in a URL a client sent back.
+
+    Clients only ever see ``redact_url`` output. When they send it back
+    (editing a camera's name, or its path) the stored credentials must be
+    kept rather than replaced by the mask. They are restored only for the
+    same scheme, host and port: moving a camera to another address needs the
+    credentials typed again, so nobody can have them sent to a server of
+    their choosing.
+    """
+    if REDACTION_MASK not in submitted:
+        return submitted
+    try:
+        new, old = urlsplit(submitted), urlsplit(current)
+        same_address = (new.scheme, new.hostname, new.port) == (old.scheme, old.hostname, old.port)
+    except ValueError as exc:
+        raise MaskedCredentialsError("unparseable URL") from exc
+    if not same_address:
+        raise MaskedCredentialsError("re-enter the camera credentials when changing its address")
+
+    result = submitted
+    userinfo, at, host = new.netloc.rpartition("@")
+    if at and userinfo == REDACTION_MASK:
+        old_userinfo = old.netloc.rpartition("@")[0]
+        netloc = f"{old_userinfo}@{host}" if old_userinfo else host
+        result = urlunsplit(new._replace(netloc=netloc))
+
+    old_values = {key.lower(): value for key, value in _SECRET_PARAM.findall(current)}
+
+    def put_back(match: "re.Match[str]") -> str:
+        value = old_values.get(match.group(1).lower())
+        if value is None:
+            raise MaskedCredentialsError(f"no stored value for {match.group(1)}")
+        return f"{match.group(1)}={value}"
+
+    result = _MASKED_PARAM.sub(put_back, result)
+    if REDACTION_MASK in urlsplit(result).netloc:
+        raise MaskedCredentialsError("masked credentials cannot be restored")
+    return result

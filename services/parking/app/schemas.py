@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from app.utils import iso_utc
+from argus_common.net import redact_url
 from argus_vision.schemas import CameraCalibrationSchema
 
 ParkingCameraRole = Literal["gate_entry", "gate_exit", "parking"]
@@ -51,6 +52,11 @@ class CameraResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     service: Literal["parking"] = "parking"
+
+    @field_serializer("stream_url")
+    def _mask_credentials(self, value: str) -> str:
+        # Credentials are never returned; see restore_masked_credentials.
+        return redact_url(value)
 
     @field_serializer("created_at", "updated_at")
     def _ser_dt(self, v: datetime) -> str:

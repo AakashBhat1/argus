@@ -18,6 +18,7 @@ from app.mesh import mesh
 from app.models import Camera
 from app.routers import cameras, internal, parking, parking_chat
 from app.services.auth import authenticate_websocket
+from app.services.camera_secrets import camera_secret_box, seal_stored_stream_urls
 from argus_common.web_auth import WS_AUTH_CLOSE_CODE, hold_until_expiry
 from app.services.outbox import outbox_runner
 from app.services.stream_manager import stream_manager
@@ -39,11 +40,13 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info("Starting %s", settings.APP_NAME)
 
-    # Fail fast on a missing service identity (ephemeral only in DEBUG).
+    # Fail fast on missing keys (ephemeral / plaintext only in DEBUG).
     mesh.signer()
+    camera_secret_box()
 
     detector.initialize()
     await init_db()
+    await seal_stored_stream_urls(get_session_factory())
 
     inference_pool = InferenceWorkerPool(
         detector=detector,

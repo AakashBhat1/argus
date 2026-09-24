@@ -3,6 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 from typing import Literal, Optional
 from app.models import UserRole
 from app.utils import iso_utc
+from argus_common.net import redact_url
 from argus_vision.schemas import CameraCalibrationSchema
 
 
@@ -66,6 +67,7 @@ class CameraResponse(BaseModel):
     id: str
     name: str
     location: str
+    # Credentials are never returned; see restore_masked_credentials.
     stream_url: str
     status: str
     resolution: str
@@ -77,6 +79,10 @@ class CameraResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     service: Literal["surveillance"] = "surveillance"
+
+    @field_serializer("stream_url")
+    def _mask_credentials(self, value: str) -> str:
+        return redact_url(value)
 
     @field_serializer("created_at", "updated_at")
     def _ser_dt(self, v: datetime) -> str:

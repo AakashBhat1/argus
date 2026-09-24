@@ -57,3 +57,33 @@ def test_migrates_parking_rows_and_only_parking_cameras(tmp_path, monkeypatch):
     with sqlite3.connect(source) as conn:
         assert conn.execute("SELECT COUNT(*) FROM vehicle_profiles").fetchone()[0] == 0
         assert [r[0] for r in conn.execute("SELECT id FROM cameras")] == ["perim-1"]
+
+
+def test_sealed_camera_urls_are_resealed_for_parking(tmp_path, monkeypatch):
+    import os
+
+    import pytest
+
+    from argus_common.secretbox import SecretBox
+
+    source, target = tmp_path / "surveillance.db", tmp_path / "parking.db"
+    _source_db(source)
+    surveillance_box, parking_box = SecretBox.from_key(os.urandom(32)), SecretBox.from_key(os.urandom(32))
+    url = "rtsp://gate:Pa55@203.0.113.1/x"
+    with sqlite3.connect(source) as conn:
+        conn.execute(
+            "UPDATE cameras SET stream_url = ? WHERE id = 'gate-1'",
+            (surveillance_box.seal(url, "argus-surveillance:cameras.stream_url"),),
+        )
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{target}")
+    config = Config(str(SERVICE_DIR / "alembic.ini"))
+    config.set_main_option("script_location", str(SERVICE_DIR / "alembic"))
+    command.upgrade(config, "head")
+    script = _load_script()
+
+    with pytest.raises(SystemExit, match="source-camera-key"):
+        script.migrate(f"sqlite:///{source}", f"sqlite:///{target}")
+    script.migrate(f"sqlite:///{source}", f"sqlite:///{target}", source_box=surveillance_box, target_box=parking_box)
+    with sqlite3.connect(target) as conn:
+        stored = conn.execute("SELECT stream_url FROM cameras WHERE id = 'gate-1'").fetchone()[0]
+    assert parking_box.open(stored, "argus-parking:cameras.stream_url") == url

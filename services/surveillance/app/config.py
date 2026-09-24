@@ -68,6 +68,11 @@ class Settings(VisionSettings, ServiceMeshSettings):
     # needs False, which is refused unless DEBUG.
     AUTH_COOKIE_SECURE: bool = True
 
+    # 32-byte key sealing camera credentials in the database (deploy/pki.sh).
+    # Required unless DEBUG. Retired keys (*.key) stay readable for rotation.
+    CAMERA_SECRETS_KEY_FILE: str | None = None
+    CAMERA_SECRETS_PREVIOUS_KEYS_DIR: str | None = None
+
     # Local SQLite DB for the classifier-only service
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DB_PATH}"
 

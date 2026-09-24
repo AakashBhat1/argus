@@ -12,7 +12,8 @@ from app.models import (
 )
 from app.schemas import CameraCreate, CameraUpdate, CameraResponse
 from argus_vision.sources import SourceError, validate_camera_source
-from app.services.auth import get_current_active_user
+from app.services.auth import get_current_active_user, require_admin
+from argus_common.net import MaskedCredentialsError, restore_masked_credentials
 from app.services.stream_manager import _resolve_stream_source, stream_manager
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
@@ -56,7 +57,7 @@ async def get_camera(
 async def create_camera(
     data: CameraCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
 ):
     _validate_stream_url(data.stream_url)
     camera_data = data.model_dump()
@@ -73,7 +74,7 @@ async def update_camera(
     camera_id: str,
     data: CameraUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
 ):
     result = await db.execute(
         select(Camera).where(Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id)
@@ -84,6 +85,12 @@ async def update_camera(
 
     update_data = data.model_dump(exclude_unset=True)
     if "stream_url" in update_data:
+        # Clients only see masked URLs; one sent back keeps the stored
+        # credentials (same address only).
+        try:
+            update_data["stream_url"] = restore_masked_credentials(update_data["stream_url"], camera.stream_url)
+        except MaskedCredentialsError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         _validate_stream_url(update_data["stream_url"])
 
     for key, value in update_data.items():
@@ -101,7 +108,7 @@ async def update_camera(
 async def delete_camera(
     camera_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
 ):
     result = await db.execute(
         select(Camera).where(Camera.id == camera_id, Camera.tenant_id == current_user.tenant_id)

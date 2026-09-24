@@ -86,6 +86,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://surveillance:${POSTGRES_PASSWORD}@surveillance-db:5432/surveillance
       AUTH_SIGNING_KEY_FILE: /run/secrets/argus/surveillance/auth.key
       SERVICE_SIGNING_KEY_FILE: /run/secrets/argus/surveillance/service.key
+      CAMERA_SECRETS_KEY_FILE: /run/secrets/argus/surveillance/camera-secrets.key
       SERVICE_PEER_KEYS_DIR: /run/secrets/argus/surveillance/peers
       INTERNAL_TLS_CA_FILE: /run/secrets/argus/surveillance/ca.pem
       INTERNAL_TLS_CERT_FILE: /run/secrets/argus/surveillance/tls.pem
@@ -125,6 +126,7 @@ services:
       AUTH_JWKS_URL: https://edge:8443/.well-known/jwks.json
       SURVEILLANCE_INTERNAL_URL: https://edge:8443
       SERVICE_SIGNING_KEY_FILE: /run/secrets/argus/parking/service.key
+      CAMERA_SECRETS_KEY_FILE: /run/secrets/argus/parking/camera-secrets.key
       SERVICE_PEER_KEYS_DIR: /run/secrets/argus/parking/peers
       INTERNAL_TLS_CA_FILE: /run/secrets/argus/parking/ca.pem
       INTERNAL_TLS_CERT_FILE: /run/secrets/argus/parking/tls.pem

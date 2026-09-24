@@ -65,6 +65,7 @@ services:
       AUTH_JWKS_URL: https://${SURVEILLANCE_EDGE:?set SURVEILLANCE_EDGE=<surveillance-host>:8443}/.well-known/jwks.json
       SURVEILLANCE_INTERNAL_URL: https://${SURVEILLANCE_EDGE}
       SERVICE_SIGNING_KEY_FILE: /run/secrets/argus/parking/service.key
+      CAMERA_SECRETS_KEY_FILE: /run/secrets/argus/parking/camera-secrets.key
       SERVICE_PEER_KEYS_DIR: /run/secrets/argus/parking/peers
       INTERNAL_TLS_CA_FILE: /run/secrets/argus/parking/ca.pem
       INTERNAL_TLS_CERT_FILE: /run/secrets/argus/parking/tls.pem
