@@ -27,27 +27,27 @@ export default function AnalyticsPage() {
   }, []);
 
   useEffect(() => {
-    loadAnalytics();
+    let cancelled = false;
+    const cid = selectedCamera || undefined;
+    Promise.all([
+      api.analytics.timeline(hours, cid),
+      api.analytics.classDistribution(hours, cid),
+      api.analytics.performance(),
+    ])
+      .then(([t, c, p]) => {
+        if (cancelled) return;
+        setTimeline(t);
+        setClassDist(c);
+        setPerformance(p);
+      })
+      .catch((err) => console.error("Failed to load analytics:", err))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedCamera, hours]);
-
-  async function loadAnalytics() {
-    try {
-      setLoading(true);
-      const cid = selectedCamera || undefined;
-      const [t, c, p] = await Promise.all([
-        api.analytics.timeline(hours, cid),
-        api.analytics.classDistribution(hours, cid),
-        api.analytics.performance(),
-      ]);
-      setTimeline(t);
-      setClassDist(c);
-      setPerformance(p);
-    } catch (err) {
-      console.error("Failed to load analytics:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   const totalDetections = classDist.reduce((sum, c) => sum + c.count, 0);
   const avgConf =
@@ -66,7 +66,7 @@ export default function AnalyticsPage() {
         <div className="flex items-center gap-2">
           <select
             value={selectedCamera}
-            onChange={(e) => setSelectedCamera(e.target.value)}
+            onChange={(e) => { setLoading(true); setSelectedCamera(e.target.value); }}
             className="select"
             aria-label="Select camera"
           >
@@ -79,7 +79,7 @@ export default function AnalyticsPage() {
           </select>
           <select
             value={hours}
-            onChange={(e) => setHours(Number(e.target.value))}
+            onChange={(e) => { setLoading(true); setHours(Number(e.target.value)); }}
             className="select"
             aria-label="Select time range"
           >

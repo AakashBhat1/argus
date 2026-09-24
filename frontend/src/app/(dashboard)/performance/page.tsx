@@ -23,22 +23,28 @@ export default function PerformancePage() {
   const [history, setHistory] = useState<{ time: string; dpm: number; conf: number }[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
+    const loadData = async () => {
+      try {
+        const [p, s] = await Promise.all([api.analytics.performance(), api.streams.status()]);
+        if (cancelled) return;
+        setPerf(p);
+        setStreams(s.streams || []);
+        setHistory((prev) => {
+          const next = [...prev, { time: new Date().toLocaleTimeString("en", { hour12: false }), dpm: p.detections_per_minute, conf: Math.round(p.avg_confidence * 100) }];
+          return next.slice(-30);
+        });
+      } catch (err) {
+        console.error("Failed to load performance data:", err);
+      }
+    };
     loadData();
     const id = setInterval(loadData, 5000);
-    return () => clearInterval(id);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
-
-  async function loadData() {
-    try {
-      const [p, s] = await Promise.all([api.analytics.performance(), api.streams.status()]);
-      setPerf(p);
-      setStreams(s.streams || []);
-      setHistory((prev) => {
-        const next = [...prev, { time: new Date().toLocaleTimeString("en", { hour12: false }), dpm: p.detections_per_minute, conf: Math.round(p.avg_confidence * 100) }];
-        return next.slice(-30);
-      });
-    } catch {}
-  }
 
   const running = streams.filter((stream) => stream.is_running);
   const avgFps = running.length > 0

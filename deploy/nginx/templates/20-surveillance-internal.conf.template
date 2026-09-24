@@ -1,0 +1,29 @@
+# Surveillance internal listener (mutual TLS). Peers (parking, face) reach
+# surveillance only here: events, health and the JWKS.
+# Environment:
+#   SURVEILLANCE_INTERNAL_PORT   default 8443
+#   SURVEILLANCE_UPSTREAM        default surveillance:8000
+
+server {
+    listen ${SURVEILLANCE_INTERNAL_PORT} ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /run/secrets/argus/surveillance/tls.pem;
+    ssl_certificate_key /run/secrets/argus/surveillance/tls.key;
+    include /etc/nginx/snippets/internal-tls.conf;
+
+    client_max_body_size 256k;
+
+    location /internal/ {
+        if ($argus_client_cn !~ "^(parking|face)$") { return 403; }
+        include /etc/nginx/snippets/mesh-identity.conf;
+        proxy_pass http://${SURVEILLANCE_UPSTREAM};
+    }
+    location = /.well-known/jwks.json {
+        if ($argus_client_cn !~ "^(parking|face)$") { return 403; }
+        include /etc/nginx/snippets/mesh-identity.conf;
+        proxy_pass http://${SURVEILLANCE_UPSTREAM};
+    }
+    location / { return 404; }
+}

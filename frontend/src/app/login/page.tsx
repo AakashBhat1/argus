@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { setToken } from "@/lib/auth";
+import { signIn } from "@/lib/session";
 import { Eye, EyeOff, Lock, User } from "lucide-react";
 
 export default function LoginPage() {
@@ -19,23 +19,7 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
-      const formData = new URLSearchParams();
-      formData.append("username", username);
-      formData.append("password", password);
-
-      const res = await fetch(`${API_BASE}/auth/token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData,
-      });
-
-      if (!res.ok) {
-        throw new Error("Invalid username or password");
-      }
-
-      const data = await res.json();
-      setToken(data.access_token);
+      await signIn(username, password);
       router.push("/");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to login";

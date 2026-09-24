@@ -1,0 +1,869 @@
+import asyncio
+import logging
+import time
+from typing import Optional
+
+import cv2
+import numpy as np
+
+from app.config import get_settings
+from app import database
+from app.models import Alert, AlertSeverity, Camera, Detection
+from app.services.intrusion_pipeline import IntrusionPipeline, PipelineResult
+from app.services.crime_classifier import crime_classifier, risk_trigger as crime_risk_trigger
+from app.services.risk_engine import RiskEvent
+from app.services.roboflow_classifier import roboflow_classifier
+from app.services.websocket_manager import ws_manager
+from argus_common.net import (
+    StreamTargetError,
+    is_network_source,
+    policy_from_settings,
+    recheck_stream_target,
+    redact_url,
+)
+from argus_vision.metrics import inference_metrics
+from argus_vision.roi import IntrusionEvent
+from argus_vision.sources import (
+    encode_frame_to_base64 as _encode_frame_to_base64,
+    mediamtx_can_pull as _mediamtx_can_pull,
+    mediamtx_read_url,
+    open_capture as _open_capture,
+    resolve_stream_source as _resolve_stream_source,  # noqa: F401  (re-exported for callers and tests)
+)
+from app.utils import utc_now
+
+logger = logging.getLogger(__name__)
+
+
+class VideoStream:
+    """Manages a single camera video stream with detection and tracking."""
+
+    def __init__(self, camera: Camera, inference_pool, capture_url: Optional[str] = None):
+        self.camera_id = camera.id
+        self.stream_url = camera.stream_url
+        # Where frames are actually read from: the camera itself, or the
+        # MediaMTX path that is already ingesting it (single ingest).
+        self._capture_url = capture_url or camera.stream_url
+        self.camera_name = camera.name
+        self.tenant_id = camera.tenant_id
+        self.camera_role = camera.role or 'surveillance'
+        self._pipeline = IntrusionPipeline(
+            camera_id=str(camera.id),
+            camera_name=camera.name,
+            tenant_id=camera.tenant_id,
+            camera_role=self.camera_role,
+            calibration=getattr(camera, "calibration", None),
+            resolution=getattr(camera, "resolution", None),
+        )
+        self._inference_pool = inference_pool
+
+        self._running = False
+        self._paused = False
+        self._task: Optional[asyncio.Task] = None
+        self._cap: Optional[cv2.VideoCapture] = None
+        self._frame_count = 0
+        self._fps = 0.0
+        self._start_time = 0.0
+        self._last_detections: list[dict] = []
+        self._last_detection_persist_at = 0.0
+        self._settings = get_settings()
+        self._reconnect_attempts = 0
+        self._max_reconnect_attempts = 5
+        self._reconnect_base_delay = 0.1  # seconds; exponential backoff base
+        self._uses_mediamtx = bool(
+            self._settings.MEDIAMTX_ENABLED
+            and _mediamtx_can_pull(self.stream_url)
+        )
+
+        # Adaptive FPS state
+        self._current_frame_skip = self._settings.FRAME_SKIP
+        self._last_fps_eval_time = time.time()
+
+    async def start(self) -> bool:
+        """
+        Start the stream after validating that the source can be opened.
+
+        Returns:
+            True if stream task started, False if source is invalid/unavailable.
+        """
+        if self._running:
+            return True
+
+        # Preflight validation prevents false-positive "started" responses.
+        # Opening an RTSP source can block for seconds, so keep it off the loop.
+        loop = asyncio.get_running_loop()
+        test_cap = await loop.run_in_executor(None, _open_capture, self._capture_url)
+        can_open = test_cap.isOpened()
+        if test_cap:
+            test_cap.release()
+
+        if not can_open:
+            logger.error(
+                "Cannot start stream '%s': invalid source %s",
+                self.camera_name,
+                redact_url(self._capture_url),
+            )
+            return False
+
+        self._running = True
+        self._start_time = time.time()
+        self._task = asyncio.create_task(self._process_loop())
+        logger.info("Stream started: %s (%s)", self.camera_name, self.camera_id)
+        return True
+
+    async def stop(self):
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._cap and self._cap.isOpened():
+            self._cap.release()
+        self._pipeline.reset()
+        logger.info("Stream stopped: %s (%s)", self.camera_name, self.camera_id)
+
+    def pause(self):
+        self._paused = True
+        # Release capture to free resources; save frame position for video files
+        self._paused_frame_pos = None
+        if self._cap and self._cap.isOpened():
+            if self.is_video_source:
+                self._paused_frame_pos = int(self._cap.get(cv2.CAP_PROP_POS_FRAMES))
+            self._cap.release()
+        logger.info("Stream paused: %s (%s)", self.camera_name, self.camera_id)
+
+    def resume(self):
+        self._paused = False
+        # Reopen capture and seek to saved position
+        self._cap = _open_capture(self._capture_url)
+        if self._cap and self.is_video_source and hasattr(self, "_paused_frame_pos") and self._paused_frame_pos is not None:
+            self._cap.set(cv2.CAP_PROP_POS_FRAMES, self._paused_frame_pos)
+        logger.info("Stream resumed: %s (%s)", self.camera_name, self.camera_id)
+
+    @property
+    def is_video_source(self) -> bool:
+        return self.stream_url.strip().startswith("video://")
+
+    def update_calibration(self, calibration: Optional[dict]) -> None:
+        self._pipeline.update_calibration(calibration)
+
+    @property
+    def pipeline(self) -> IntrusionPipeline:
+        return self._pipeline
+
+    def _update_adaptive_fps(self):
+        """Dynamically adjust frame skipping to meet latency targets."""
+        if not self._settings.ADAPTIVE_FPS_ENABLED or not self._inference_pool:
+            return
+
+        now = time.time()
+        if now - self._last_fps_eval_time < 5.0:
+            return
+
+        metrics = self._inference_pool.get_metrics()
+        latency = metrics.get("avg_batch_latency_ms", 0)
+        target = self._settings.TARGET_LATENCY_MS
+
+        old_skip = self._current_frame_skip
+
+        if latency > target * 1.5:
+            self._current_frame_skip = min(self._current_frame_skip + 1, 6)
+        elif latency < target * 0.5:
+            self._current_frame_skip = max(self._current_frame_skip - 1, 1)
+
+        if old_skip != self._current_frame_skip:
+            logger.info(
+                "Adaptive FPS [%s]: latency %.0fms. frame_skip %s -> %s",
+                self.camera_name,
+                latency,
+                old_skip,
+                self._current_frame_skip,
+            )
+
+        self._last_fps_eval_time = now
+
+    async def _process_loop(self):
+        loop = asyncio.get_event_loop()
+        # The pipeline executes in a worker thread; give it this loop so
+        # OCR can schedule its async work back here.
+        bind_loop = getattr(self._pipeline, "bind_loop", None)
+        if callable(bind_loop):
+            bind_loop(loop)
+        self._cap = await loop.run_in_executor(None, _open_capture, self._capture_url)
+
+        if not self._cap.isOpened():
+            logger.error("Cannot open stream: %s", redact_url(self._capture_url))
+            self._running = False
+            return
+
+        try:
+            while self._running:
+                # When paused, capture is released — sleep until resumed
+                if self._paused:
+                    await asyncio.sleep(0.2)
+                    continue
+
+                # After resume, capture may need to be verified
+                if not self._cap or not self._cap.isOpened():
+                    self._cap = await loop.run_in_executor(
+                        None, _open_capture, self._capture_url
+                    )
+                    if not self._cap.isOpened():
+                        await asyncio.sleep(0.5)
+                        continue
+
+                ret, frame = await loop.run_in_executor(None, self._cap.read)
+                if not ret:
+                    # For video files, end-of-file means loop back to start
+                    if self.is_video_source:
+                        self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        logger.info("Video looped: %s", self.camera_name)
+                        continue
+
+                    self._reconnect_attempts += 1
+                    if self._reconnect_attempts > self._max_reconnect_attempts:
+                        logger.error(
+                            "Max reconnect attempts (%d) exhausted for %s. Stopping stream.",
+                            self._max_reconnect_attempts,
+                            self.camera_name,
+                        )
+                        self._running = False
+                        break
+                    backoff = min(self._reconnect_base_delay * (2 ** self._reconnect_attempts), 30)
+                    logger.warning(
+                        "Frame read failed for %s, reconnect attempt %d/%d (backoff %.1fs)...",
+                        self.camera_name,
+                        self._reconnect_attempts,
+                        self._max_reconnect_attempts,
+                        backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    self._cap.release()
+                    self._cap = await loop.run_in_executor(
+                        None, _open_capture, self._capture_url
+                    )
+                    continue
+
+                self._reconnect_attempts = 0
+                self._frame_count += 1
+
+                self._update_adaptive_fps()
+
+                if self._frame_count % self._current_frame_skip != 0:
+                    continue
+
+                t_infer_start = time.perf_counter()
+                detections = await self._inference_pool.submit(frame, str(self.camera_id))
+                infer_ms = (time.perf_counter() - t_infer_start) * 1000
+
+                pipeline_result: PipelineResult = await loop.run_in_executor(
+                    None,
+                    self._pipeline.process,
+                    detections,
+                    frame,
+                    utc_now(),
+                )
+                tracked = pipeline_result.tracked_objects
+                intrusion_events = pipeline_result.intrusion_events
+                intrusion_payload = pipeline_result.intrusion_payload()
+
+                self._last_detections = tracked
+                elapsed = time.time() - self._start_time
+                self._fps = self._frame_count / elapsed if elapsed > 0 else 0
+
+                inference_metrics.record_inference(camera_id=str(self.camera_id), latency_ms=infer_ms)
+
+                now_monotonic = time.monotonic()
+                if (
+                    tracked
+                    and now_monotonic - self._last_detection_persist_at
+                    >= float(self._settings.DETECTION_PERSIST_INTERVAL_SEC)
+                ):
+                    await self._store_detections(tracked)
+                    self._last_detection_persist_at = now_monotonic
+
+                # Fire Roboflow secondary classification (non-blocking background task)
+                if tracked and roboflow_classifier.enabled:
+                    asyncio.create_task(
+                        self._roboflow_enrich(frame.copy(), tracked, intrusion_events)
+                    )
+
+                # Fire ViT classification for intrusion or elevated risk
+                # (close contact / suspicious behaviour).
+                crime_results_payload: list[dict] = []
+                risk_trigger = any(crime_risk_trigger(obj) for obj in tracked)
+                if crime_classifier.enabled and (intrusion_events or risk_trigger):
+                    asyncio.create_task(
+                        self._crime_classify(
+                            frame.copy(),
+                            tracked,
+                            intrusion_events,
+                        )
+                    )
+
+                risk_events = pipeline_result.risk_events
+                if tracked or intrusion_events or risk_events:
+                    await self._check_alerts(tracked, intrusion_events, risk_events)
+
+                payload: dict = {
+                    "camera_id": str(self.camera_id),
+                    "camera_name": self.camera_name,
+                    "frame_number": self._frame_count,
+                    "timestamp": utc_now().isoformat() + "Z",
+                    "detections": tracked,
+                    "intrusions": intrusion_payload,
+                    "risk_events": pipeline_result.risk_payload(),
+                    "risk_summary": pipeline_result.risk_summary,
+                    "zones": pipeline_result.zones,
+                    "arm_mode": pipeline_result.arm_mode,
+                    "ground_plane_calibrated": self._pipeline.geometry.has_ground_plane,
+                    "crime_classifications": crime_results_payload,
+                    "fps": round(self._fps, 1),
+                    "frame_width": int(frame.shape[1]),
+                    "frame_height": int(frame.shape[0]),
+                    "frame_skip": self._current_frame_skip,
+                    "inference_ms": round(infer_ms, 1),
+                    "is_video_source": self.stream_url.strip().startswith("video://"),
+                    "is_paused": self._paused,
+                    "media_transport": (
+                        "webrtc" if self._uses_mediamtx else "websocket_jpeg"
+                    ),
+                }
+                if not self._uses_mediamtx:
+                    payload["frame_image"] = await loop.run_in_executor(
+                        None,
+                        _encode_frame_to_base64,
+                        frame,
+                        60,
+                    )
+                await ws_manager.broadcast_detections(str(self.camera_id), payload, tenant_id=self.tenant_id)
+
+                await asyncio.sleep(0.001)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.exception("Stream error for %s: %s", self.camera_name, exc)
+        finally:
+            if self._cap and self._cap.isOpened():
+                self._cap.release()
+
+    async def _store_detections(self, tracked_objects: list[dict]):
+        try:
+            session_factory = database.get_session_factory()
+            async with session_factory() as session:
+                for obj in tracked_objects:
+                    detection = Detection(
+                        camera_id=self.camera_id,
+                        tenant_id=self.tenant_id,
+                        object_id=obj["object_id"],
+                        class_label=obj["class_label"],
+                        confidence=obj["confidence"],
+                        bbox_x=obj["bbox_x"],
+                        bbox_y=obj["bbox_y"],
+                        bbox_w=obj["bbox_w"],
+                        bbox_h=obj["bbox_h"],
+                        frame_number=obj["frame_number"],
+                        metadata_={
+                            "inside_roi": bool(obj.get("inside_roi", False)),
+                            "intrusion": bool(obj.get("intrusion", False)),
+                            "roi_zone_ids": obj.get("roi_zone_ids", []),
+                            "max_roi_dwell_sec": float(obj.get("max_roi_dwell_sec", 0.0)),
+                            "distance_m": obj.get("distance_m"),
+                            "risk_score": obj.get("risk_score"),
+                            "risk_level": obj.get("risk_level"),
+                            "authorized": obj.get("authorized"),
+                            "origin": obj.get("origin"),
+                        },
+                    )
+                    session.add(detection)
+                await session.commit()
+        except Exception as exc:
+            logger.error("Failed to store detections: %s", exc)
+
+    async def _check_alerts(
+        self,
+        tracked_objects: list[dict],
+        intrusion_events: list[IntrusionEvent],
+        risk_events: Optional[list[RiskEvent]] = None,
+    ):
+        """Persist and broadcast alerts.
+
+        With the risk engine enabled, person alerts come exclusively from
+        ``RiskEvent`` escalations: the raw zone crossing is a *signal*, the
+        engine decides whether it is worth an operator's attention (armed
+        zone, unauthorized, suspicious behaviour...). When the engine is
+        disabled, the legacy per-incident intrusion alert is used instead.
+        """
+        risk_events = risk_events or []
+        alerts_payload: list[dict] = []
+        try:
+            session_factory = database.get_session_factory()
+            async with session_factory() as session:
+                person_count = sum(1 for obj in tracked_objects if obj["class_label"] == "person")
+                if person_count > 10:
+                    crowd_alert = Alert(
+                        camera_id=self.camera_id,
+                        tenant_id=self.tenant_id,
+                        type="crowd_detected",
+                        severity=AlertSeverity.HIGH.value,
+                        trigger_condition=f"person_count > 10 (detected: {person_count})",
+                        description=f"High crowd density detected on {self.camera_name}",
+                    )
+                    session.add(crowd_alert)
+                    await session.flush()
+                    alerts_payload.append(
+                        {
+                            "alert_id": str(crowd_alert.id),
+                            "camera_id": str(self.camera_id),
+                            "type": "crowd_detected",
+                            "severity": AlertSeverity.HIGH.value,
+                            "person_count": person_count,
+                            "timestamp": utc_now().isoformat() + "Z",
+                        }
+                    )
+
+                if self._settings.RISK_ENGINE_ENABLED:
+                    for event in risk_events:
+                        alerts_payload.append(await self._persist_risk_alert(session, event))
+                else:
+                    for event in intrusion_events:
+                        if not event.new_incident:
+                            continue
+                        alerts_payload.append(await self._persist_legacy_intrusion_alert(session, event))
+
+                if alerts_payload:
+                    await session.commit()
+
+            for payload in alerts_payload:
+                await ws_manager.broadcast_alert(payload, tenant_id=self.tenant_id)
+        except Exception as exc:
+            logger.error("Failed to create alerts: %s", exc)
+
+    async def _persist_risk_alert(self, session, event: RiskEvent) -> dict:
+        alert_type = "intrusion_detected" if event.intrusion else "suspicious_activity"
+        if event.threat:
+            alert_type = "blacklisted_vehicle_contact"
+        severity = AlertSeverity.CRITICAL.value if event.level == "critical" else AlertSeverity.HIGH.value
+        where = f" in {', '.join(event.zone_names)}" if event.zone_names else ""
+        distance = f" ~{event.distance_m:.0f} m away" if event.distance_m is not None else ""
+        reasons = "; ".join(event.reasons) or "elevated risk"
+        alert = Alert(
+            camera_id=self.camera_id,
+            tenant_id=self.tenant_id,
+            type=alert_type,
+            severity=severity,
+            trigger_condition=f"risk {event.score:.0f}/100 ({event.level}): {reasons}",
+            description=(
+                f"{event.level.title()} risk person #{event.object_id}{where} on {self.camera_name}{distance}"
+            ),
+            metadata_={
+                "risk": event.to_dict(),
+                "source": "risk_engine",
+            },
+        )
+        session.add(alert)
+        await session.flush()
+        return {
+            "alert_id": str(alert.id),
+            "camera_id": str(self.camera_id),
+            "camera_name": self.camera_name,
+            "type": alert_type,
+            "severity": severity,
+            "object_id": event.object_id,
+            "risk_score": round(event.score, 1),
+            "risk_level": event.level,
+            "reasons": list(event.reasons),
+            "zone_names": list(event.zone_names),
+            "incident_id": event.incident_id,
+            "distance_m": event.distance_m,
+            "timestamp": utc_now().isoformat() + "Z",
+        }
+
+    async def _persist_legacy_intrusion_alert(self, session, event: IntrusionEvent) -> dict:
+        alert = Alert(
+            camera_id=self.camera_id,
+            tenant_id=self.tenant_id,
+            type="intrusion_detected",
+            severity=AlertSeverity.CRITICAL.value,
+            trigger_condition=(
+                f"object_{event.object_id} in zone '{event.zone_name}' for "
+                f"{event.dwell_seconds:.1f}s (threshold {event.threshold_seconds:.1f}s)"
+            ),
+            description=(
+                f"Intruder detected in {event.zone_name} on {self.camera_name} "
+                f"(object {event.object_id})"
+            ),
+            metadata_=event.to_dict(),
+        )
+        session.add(alert)
+        await session.flush()
+        return {
+            "alert_id": str(alert.id),
+            "camera_id": str(self.camera_id),
+            "type": "intrusion_detected",
+            "severity": AlertSeverity.CRITICAL.value,
+            "zone_id": event.zone_id,
+            "zone_name": event.zone_name,
+            "object_id": event.object_id,
+            "incident_id": event.incident_id,
+            "dwell_seconds": round(event.dwell_seconds, 2),
+            "threshold_seconds": round(event.threshold_seconds, 2),
+            "timestamp": utc_now().isoformat() + "Z",
+        }
+
+    async def _roboflow_enrich(
+        self,
+        frame: np.ndarray,
+        tracked_objects: list[dict],
+        intrusion_events: list[IntrusionEvent],
+    ):
+        """Run Roboflow secondary classification in background, store results and alert on threats."""
+        try:
+            results = await roboflow_classifier.classify_batch(
+                frame, tracked_objects, str(self.camera_id)
+            )
+            if not results:
+                return
+
+            # Periodic cleanup of stale cooldowns
+            roboflow_classifier.cleanup_cooldowns()
+
+            session_factory = database.get_session_factory()
+            alerts_payload: list[dict] = []
+
+            async with session_factory() as session:
+                for rf_result in results:
+                    top = rf_result.top_prediction
+                    if not top:
+                        continue
+
+                    # Update detection metadata with Roboflow enrichment.
+                    # UPDATE has no ORDER BY, so fetch the latest row, then update it.
+                    from sqlalchemy import select
+
+                    sel = (
+                        select(Detection.id)
+                        .where(
+                            Detection.camera_id == str(self.camera_id),
+                            Detection.object_id == rf_result.object_id,
+                        )
+                        .order_by(Detection.timestamp.desc())
+                        .limit(1)
+                    )
+                    row = (await session.execute(sel)).scalar_one_or_none()
+                    if row:
+                        det = await session.get(Detection, row)
+                        if det:
+                            existing_meta = dict(det.metadata_ or {})
+                            existing_meta["roboflow"] = rf_result.to_dict()
+                            det.metadata_ = existing_meta
+
+                    # Create alert when Roboflow classifies a vehicle with high confidence
+                    if top.confidence >= 0.5:
+                        vehicle_alert = Alert(
+                            camera_id=self.camera_id,
+                            tenant_id=self.tenant_id,
+                            type="vehicle_detected",
+                            severity=AlertSeverity.HIGH.value,
+                            trigger_condition=(
+                                f"Roboflow classified '{top.class_label}' "
+                                f"({top.confidence:.0%}) on object_{rf_result.object_id}"
+                            ),
+                            description=(
+                                f"Vehicle classified on {self.camera_name}: "
+                                f"{top.class_label} ({top.confidence:.0%})"
+                            ),
+                            metadata_={
+                                "roboflow": rf_result.to_dict(),
+                                "source": "roboflow_secondary_classifier",
+                            },
+                        )
+                        session.add(vehicle_alert)
+                        await session.flush()
+                        alerts_payload.append({
+                            "alert_id": str(vehicle_alert.id),
+                            "camera_id": str(self.camera_id),
+                            "type": "vehicle_detected",
+                            "severity": AlertSeverity.HIGH.value,
+                            "roboflow_class": top.class_label,
+                            "roboflow_confidence": round(top.confidence, 4),
+                            "object_id": rf_result.object_id,
+                            "timestamp": utc_now().isoformat() + "Z",
+                        })
+
+                await session.commit()
+
+            # Broadcast threat alerts via WebSocket
+            for payload in alerts_payload:
+                await ws_manager.broadcast_alert(payload, tenant_id=self.tenant_id)
+
+        except Exception as exc:
+            logger.error("Roboflow enrichment failed: %s", exc)
+
+    async def _crime_classify(
+        self,
+        frame: np.ndarray,
+        tracked_objects: list[dict],
+        intrusion_events: list[IntrusionEvent],
+    ):
+        """Run ViT crime classification in background, store results and alert on crimes."""
+        try:
+            results = await crime_classifier.classify_batch(
+                frame,
+                tracked_objects,
+                str(self.camera_id),
+            )
+            if not results:
+                return
+
+            # Periodic cleanup of stale cooldowns
+            crime_classifier.cleanup_cooldowns()
+
+            settings = self._settings
+            session_factory = database.get_session_factory()
+            alerts_payload: list[dict] = []
+
+            async with session_factory() as session:
+                for cr_result in results:
+                    if cr_result.prediction == "crime":
+                        # Feed the signal back so the next frame's risk score reflects it.
+                        self._pipeline.risk_engine.mark_crime(cr_result.object_id, cr_result.confidence)
+
+                    # Update detection metadata with crime classification
+                    from sqlalchemy import select
+
+                    sel = (
+                        select(Detection.id)
+                        .where(
+                            Detection.camera_id == str(self.camera_id),
+                            Detection.tenant_id == self.tenant_id,
+                            Detection.object_id == cr_result.object_id,
+                        )
+                        .order_by(Detection.timestamp.desc())
+                        .limit(1)
+                    )
+                    row = (await session.execute(sel)).scalar_one_or_none()
+                    if row:
+                        det = await session.get(Detection, row)
+                        if det:
+                            existing_meta = dict(det.metadata_ or {})
+                            existing_meta["crime_classifier"] = cr_result.to_dict()
+                            det.metadata_ = existing_meta
+
+                    # A still crop cannot establish criminal behaviour, so the
+                    # classifier only feeds the risk engine (above). A
+                    # standalone alert is opt-in, low severity and worded as
+                    # something for an operator to verify.
+                    if (
+                        settings.CRIME_CLASSIFIER_STANDALONE_ALERTS
+                        and cr_result.prediction == "crime"
+                        and cr_result.confidence >= crime_classifier._confidence_threshold
+                    ):
+                        crime_alert = Alert(
+                            camera_id=self.camera_id,
+                            tenant_id=self.tenant_id,
+                            type="crime_classifier_flag",
+                            severity=AlertSeverity.MEDIUM.value,
+                            trigger_condition=(
+                                f"Experimental appearance classifier flagged object_{cr_result.object_id} "
+                                f"({cr_result.confidence:.0%})"
+                            ),
+                            description=(
+                                f"Experimental classifier flag on {self.camera_name} — "
+                                "verify the footage; this is not evidence of a crime."
+                            ),
+                            metadata_={
+                                "crime_classifier": cr_result.to_dict(),
+                                "source": "vit_crime_classifier",
+                                "experimental": True,
+                            },
+                        )
+                        session.add(crime_alert)
+                        await session.flush()
+                        alerts_payload.append({
+                            "alert_id": str(crime_alert.id),
+                            "camera_id": str(self.camera_id),
+                            "type": "crime_classifier_flag",
+                            "severity": AlertSeverity.MEDIUM.value,
+                            "experimental": True,
+                            "confidence": round(cr_result.confidence, 4),
+                            "object_id": cr_result.object_id,
+                            "inference_time_ms": round(cr_result.inference_time_ms, 1),
+                            "timestamp": utc_now().isoformat() + "Z",
+                        })
+
+                await session.commit()
+
+            # Broadcast crime alerts via WebSocket
+            for alert_payload in alerts_payload:
+                await ws_manager.broadcast_alert(alert_payload, tenant_id=self.tenant_id)
+
+        except Exception as exc:
+            logger.error("Crime classification failed: %s", exc)
+
+    def get_status(self) -> dict:
+        return {
+            "camera_id": str(self.camera_id),
+            "camera_name": self.camera_name,
+            "is_running": self._running,
+            "is_paused": self._paused,
+            "is_video_source": self.is_video_source,
+            "fps": round(self._fps, 1),
+            "frame_count": self._frame_count,
+            "active_tracks": len(self._last_detections),
+            "uptime_seconds": round(time.time() - self._start_time, 1) if self._running else 0,
+            "current_frame_skip": self._current_frame_skip,
+        }
+
+
+class StreamManager:
+    """Manages all active video streams."""
+
+    def __init__(self):
+        self._streams: dict[str, VideoStream] = {}
+        self._inference_pool = None
+        self._settings = get_settings()
+
+    def set_inference_pool(self, pool):
+        """Injected by main.py at startup."""
+        self._inference_pool = pool
+
+    def _mediamtx_url(self, path: str) -> str:
+        base = self._settings.MEDIAMTX_API_BASE_URL.rstrip("/")
+        return f"{base}{path}"
+
+    def _mediamtx_auth(self) -> tuple[str, str] | None:
+        username = (self._settings.MEDIAMTX_API_USERNAME or "").strip()
+        if not username:
+            return None
+        return (username, self._settings.MEDIAMTX_API_PASSWORD or "")
+
+    async def start_stream(self, camera: Camera) -> bool:
+        if camera.id in self._streams:
+            existing = self._streams[camera.id]
+            if existing._running:
+                return True
+            await existing.stop()
+            del self._streams[camera.id]
+
+        if not self._inference_pool:
+            logger.error("Cannot start stream: Inference pool not initialized")
+            return False
+
+        if is_network_source(camera.stream_url):
+            try:
+                recheck_stream_target(camera.stream_url, policy_from_settings(self._settings))
+            except StreamTargetError as exc:
+                logger.error(
+                    "Refusing to start camera %s (%s): %s",
+                    camera.id,
+                    redact_url(camera.stream_url),
+                    exc,
+                )
+                return False
+
+        capture_url: Optional[str] = None
+        if self._settings.MEDIAMTX_ENABLED and _mediamtx_can_pull(camera.stream_url):
+            # MediaMTX pulls the camera once for WebRTC playback; analytics
+            # then reads that path instead of opening a second session on
+            # the camera. If registration fails, fall back to a direct read.
+            registered = False
+            try:
+                import httpx
+
+                async with httpx.AsyncClient(
+                    timeout=self._settings.MEDIAMTX_REQUEST_TIMEOUT_SECONDS,
+                ) as client:
+                    res = await client.post(
+                        self._mediamtx_url(f"/v3/config/paths/add/{camera.id}"),
+                        auth=self._mediamtx_auth(),
+                        json={"source": camera.stream_url},
+                    )
+                    # 400 means the path already exists.
+                    registered = res.status_code in (200, 400)
+                    if not registered:
+                        logger.warning(
+                            "MediaMTX path registration failed for camera %s: HTTP %s",
+                            camera.id,
+                            res.status_code,
+                        )
+            except Exception as e:
+                logger.warning("MediaMTX API error (add path) for camera %s: %s", camera.id, e)
+            if registered and self._settings.MEDIAMTX_SINGLE_INGEST:
+                capture_url = mediamtx_read_url(str(camera.id), self._settings)
+
+        stream = VideoStream(camera, self._inference_pool, capture_url=capture_url)
+        started = await stream.start()
+        if not started:
+            return False
+
+        self._streams[camera.id] = stream
+        return True
+
+    async def stop_stream(self, camera_id: str):
+        if camera_id in self._streams:
+            await self._streams[camera_id].stop()
+            del self._streams[camera_id]
+
+        if self._settings.MEDIAMTX_ENABLED:
+            try:
+                import httpx
+
+                async with httpx.AsyncClient(
+                    timeout=self._settings.MEDIAMTX_REQUEST_TIMEOUT_SECONDS,
+                ) as client:
+                    await client.delete(
+                        self._mediamtx_url(f"/v3/config/paths/delete/{camera_id}"),
+                        auth=self._mediamtx_auth(),
+                    )
+            except Exception as e:
+                logger.warning("MediaMTX API error (delete path): %s", e)
+
+    async def stop_all(self):
+        for stream in self._streams.values():
+            await stream.stop()
+        self._streams.clear()
+
+    def pause_stream(self, camera_id: str) -> bool:
+        stream = self._streams.get(camera_id)
+        if not stream or not stream._running:
+            return False
+        if not stream.is_video_source:
+            return False
+        stream.pause()
+        return True
+
+    def resume_stream(self, camera_id: str) -> bool:
+        stream = self._streams.get(camera_id)
+        if not stream or not stream._running:
+            return False
+        stream.resume()
+        return True
+
+    def get_stream_status(self, camera_id: str) -> Optional[dict]:
+        if camera_id in self._streams:
+            return self._streams[camera_id].get_status()
+        return None
+
+    def update_camera_calibration(self, camera_id: str, calibration: Optional[dict]) -> bool:
+        stream = self._streams.get(camera_id)
+        if not stream:
+            return False
+        stream.update_calibration(calibration)
+        return True
+
+    def get_stream(self, camera_id: str) -> Optional[VideoStream]:
+        return self._streams.get(camera_id)
+
+    def get_all_status(self) -> list[dict]:
+        return [stream.get_status() for stream in self._streams.values()]
+
+    @property
+    def active_count(self) -> int:
+        return sum(1 for stream in self._streams.values() if stream._running)
+
+
+stream_manager = StreamManager()

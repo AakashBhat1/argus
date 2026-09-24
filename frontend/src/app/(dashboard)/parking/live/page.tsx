@@ -7,6 +7,7 @@ import {
   type DetectedPlate,
   type Camera,
   type GateOcrStatus,
+  type FeedMessage,
 } from "@/lib/api";
 import Link from "next/link";
 import { useWebSocket } from "@/lib/websocket";
@@ -30,7 +31,6 @@ const CLASS_COLORS: Record<string, string> = {
 };
 
 export default function ParkingLivePage() {
-  const [mounted, setMounted] = useState(false);
   const [userRole, setUserRole] = useState<string>("operator");
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -48,10 +48,6 @@ export default function ParkingLivePage() {
   // Scrolling terminal logs state
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
-  // WebSocket subscriptions
-  const { lastMessage: parkingWsMessage, isConnected: isParkingConnected } = useWebSocket("parking");
-  const { lastMessage: globalWsMessage, isConnected: isGlobalConnected } = useWebSocket("global");
-
   const addLog = useCallback((type: "info" | "success" | "warn" | "system", message: string) => {
     const id = Math.random().toString(36).substring(2, 9);
     const timestamp = new Date().toLocaleTimeString([], { hour12: false });
@@ -59,48 +55,53 @@ export default function ParkingLivePage() {
     setLogs((prev) => [...prev, newEntry].slice(-50)); // Keep last 50 logs
   }, []);
 
-  // Fetch initial data
-  const loadInitialData = useCallback(async () => {
-    try {
-      // Get user info and role
-      const profile = await api.auth.me();
-      setUserRole(profile.role);
-      setIsAdmin(profile.role === "admin");
-
-      // Get cameras
-      const camList = await api.cameras.list(true);
-      // Gate cameras are the ones with a gate role (that is what makes OCR
-      // fire). Fall back to name/location matching for legacy setups.
-      const byRole = camList.filter((c) => GATE_ROLES.includes(c.role || ""));
-      const gateCams = byRole.length > 0
-        ? byRole
-        : camList.filter((c) => c.location?.toLowerCase().includes("gate") || c.name?.toLowerCase().includes("gate"));
-      setGateCameras(gateCams.length > 0 ? gateCams : camList);
-      setAllCameras(camList);
-      if (gateCams.length > 0) {
-        setSelectedCameraId(gateCams[0].id);
-      } else if (camList.length > 0) {
-        setSelectedCameraId(camList[0].id);
-      }
-
-      // Get recent plates
-      const plates = await api.parking.plates();
-      setRecentPlates(plates.slice(0, 8));
-
-      // Initial system logs
-      addLog("system", "Argus Parking Intelligence initialized.");
-      addLog("system", `User profile loaded. Operator scope: ${profile.tenant_id}.`);
-    } catch (err) {
-      console.error("Failed to load initial live data:", err);
-      addLog("warn", "System warning: failed to retrieve full environment settings.");
-    }
-  }, [addLog]);
-
-  // Mount logic
+  // Initial load (runs once; state is only set after the awaits resolve).
   useEffect(() => {
-    setMounted(true);
-    loadInitialData();
-  }, [loadInitialData]);
+    let cancelled = false;
+    const load = async () => {
+      try {
+        // Get user info and role
+        const profile = await api.auth.me();
+        if (cancelled) return;
+        setUserRole(profile.role);
+        setIsAdmin(profile.role === "admin");
+
+        // Get cameras
+        const camList = (await api.cameras.list(true)).filter((c) => c.service === "parking");
+        if (cancelled) return;
+        // Gate cameras are the ones with a gate role (that is what makes OCR
+        // fire). Fall back to name/location matching for legacy setups.
+        const byRole = camList.filter((c) => GATE_ROLES.includes(c.role || ""));
+        const gateCams = byRole.length > 0
+          ? byRole
+          : camList.filter((c) => c.location?.toLowerCase().includes("gate") || c.name?.toLowerCase().includes("gate"));
+        setGateCameras(gateCams.length > 0 ? gateCams : camList);
+        setAllCameras(camList);
+        if (gateCams.length > 0) {
+          setSelectedCameraId(gateCams[0].id);
+        } else if (camList.length > 0) {
+          setSelectedCameraId(camList[0].id);
+        }
+
+        // Get recent plates
+        const plates = await api.parking.plates();
+        if (cancelled) return;
+        setRecentPlates(plates.slice(0, 8));
+
+        // Initial system logs
+        addLog("system", "Argus Parking Intelligence initialized.");
+        addLog("system", `User profile loaded. Operator scope: ${profile.tenant_id}.`);
+      } catch (err) {
+        console.error("Failed to load initial live data:", err);
+        if (cancelled) return;
+        addLog("warn", "System warning: failed to retrieve full environment settings.");
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [addLog]);
 
   // Poll the selected camera's stream status: tells us whether plate OCR is
   // actually armed (gate role + gate polygon) rather than assuming it is.
@@ -109,7 +110,7 @@ export default function ParkingLivePage() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const st = await api.streams.cameraStatus(selectedCameraId);
+        const st = await api.streams.cameraStatus(selectedCameraId, "parking");
         if (cancelled) return;
         setStreamRunning(!!st?.is_running);
         setOcrStatus(st?.gate_ocr ?? null);
@@ -127,55 +128,51 @@ export default function ParkingLivePage() {
     };
   }, [selectedCameraId]);
 
-  // Handle global WebSocket (contains frame image data and YOLO detections)
-  useEffect(() => {
-    if (!globalWsMessage) return;
-
-    if (globalWsMessage.type === "detections" && globalWsMessage.data) {
-      const data = globalWsMessage.data;
-      if (data.camera_id === selectedCameraId) {
-        setStreamFrame(data);
-      }
+  // Selected gate camera's channel: detection metadata (and JPEG frames for
+  // local files), served by the parking service.
+  const handleCameraMessage = useCallback((message: FeedMessage) => {
+    if (message.type === "detections" && message.data?.camera_id === selectedCameraId) {
+      setStreamFrame(message.data);
     }
-  }, [globalWsMessage, selectedCameraId]);
+  }, [selectedCameraId]);
 
-  // Handle parking WebSocket (events like entry/exit)
-  useEffect(() => {
-    if (!parkingWsMessage) return;
+  // Parking channel: entry/exit events.
+  const handleParkingMessage = useCallback((message: FeedMessage) => {
+    if (message.type !== "parking" || !message.data) return;
+    const { event, space_id, plate_text, assign, amount_paid, duration_minutes, confidence } = message.data;
 
-    if (parkingWsMessage.type === "parking" && parkingWsMessage.data) {
-      const { event, space_id, plate_text, assign, amount_paid, duration_minutes } = parkingWsMessage.data;
-
-      if (event === "plate_detected") {
-        if (assign) {
-          addLog("success", `Space ${assign.space_id} assigned to vehicle: ${plate_text}.`);
-          // Prepend new plate
-          setRecentPlates((prev) => {
-            const exists = prev.find((p) => p.plate_text === plate_text);
-            if (exists) return prev;
-            const newPlate: DetectedPlate = {
-              id: Math.random().toString(),
-              tenant_id: "",
-              plate_text,
-              confidence: parkingWsMessage.data.confidence || 0.9,
-              timestamp: new Date().toISOString(),
-              is_parked: true,
-              amount_paid: 0,
-            };
-            return [newPlate, ...prev].slice(0, 8);
-          });
-        } else {
-          addLog("info", `OCR recognized plate: ${plate_text} (confidence: ${((parkingWsMessage.data.confidence || 0.8) * 100).toFixed(0)}%).`);
-        }
-      } else if (event === "exit") {
-        addLog("info", `Vehicle ${plate_text || "N/A"} released from Space ${space_id}. Paid: ₹${amount_paid}. Duration: ${duration_minutes} mins.`);
-        // Mark plate as exited
-        setRecentPlates((prev) =>
-          prev.map((p) => (p.plate_text === plate_text ? { ...p, is_parked: false } : p))
-        );
+    if (event === "plate_detected") {
+      if (assign) {
+        addLog("success", `Space ${assign.space_id} assigned to vehicle: ${plate_text}.`);
+        setRecentPlates((prev) => {
+          if (prev.some((p) => p.plate_text === plate_text)) return prev;
+          const newPlate: DetectedPlate = {
+            id: Math.random().toString(),
+            tenant_id: "",
+            plate_text,
+            confidence: confidence || 0.9,
+            timestamp: new Date().toISOString(),
+            is_parked: true,
+            amount_paid: 0,
+          };
+          return [newPlate, ...prev].slice(0, 8);
+        });
+      } else {
+        addLog("info", `OCR recognized plate: ${plate_text} (confidence: ${((confidence || 0.8) * 100).toFixed(0)}%).`);
       }
+    } else if (event === "exit") {
+      addLog("info", `Vehicle ${plate_text || "N/A"} released from Space ${space_id}. Paid: ₹${amount_paid}. Duration: ${duration_minutes} mins.`);
+      setRecentPlates((prev) =>
+        prev.map((p) => (p.plate_text === plate_text ? { ...p, is_parked: false } : p))
+      );
     }
-  }, [parkingWsMessage]);
+  }, [addLog]);
+
+  const { isConnected: isParkingConnected } = useWebSocket("parking", handleParkingMessage);
+  const { isConnected: isCameraConnected } = useWebSocket(
+    selectedCameraId ? `parking/${selectedCameraId}` : null,
+    handleCameraMessage,
+  );
 
   const handleCommandExecuted = useCallback(async (command: Record<string, any>) => {
     addLog("success", `Command executed successfully: ${JSON.stringify(command)}`);
@@ -199,9 +196,9 @@ export default function ParkingLivePage() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 text-[11px] bg-slate-900/60 border border-slate-700/30 rounded-xl px-3.5 py-2 backdrop-blur-sm">
-            <span className={isGlobalConnected ? "status-led-active" : "status-led-error"} />
-            <span className={isGlobalConnected ? "text-emerald-400 font-medium" : "text-red-400"}>
-              {isGlobalConnected ? "Global Video Live" : "Video Offline"}
+            <span className={isCameraConnected ? "status-led-active" : "status-led-error"} />
+            <span className={isCameraConnected ? "text-emerald-400 font-medium" : "text-red-400"}>
+              {isCameraConnected ? "Gate Video Live" : "Video Offline"}
             </span>
           </div>
           <div className="flex items-center gap-2 text-[11px] bg-slate-900/60 border border-slate-700/30 rounded-xl px-3.5 py-2 backdrop-blur-sm">
@@ -254,8 +251,9 @@ export default function ParkingLivePage() {
               ) : (
                 <div className="relative w-full h-full">
                   {streamFrame.media_transport === "webrtc" && selectedCameraId ? (
-                    <WebRTCPlayer cameraId={selectedCameraId} />
+                    <WebRTCPlayer cameraId={selectedCameraId} service="parking" />
                   ) : streamFrame.frame_image ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- live base64 JPEG frames; next/image optimisation does not apply
                     <img
                       src={`data:image/jpeg;base64,${streamFrame.frame_image}`}
                       alt="Live feed"

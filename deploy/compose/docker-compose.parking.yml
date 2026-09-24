@@ -1,0 +1,172 @@
+# Argus — parking host (multi-machine layout).
+#
+# Runs the parking service with its own database, MediaMTX and local LLM,
+# behind an mTLS-only edge. Nothing here is reachable without a certificate
+# from the Argus private CA:
+#   - the surveillance host calls /internal/* (events) with CN=surveillance
+#   - the public gateway relays users' /api/v1/parking/*, /ws/parking and
+#     WHEP (/stream/) with CN=gateway
+#
+# Run from the repository root:
+#   docker compose --env-file .env -f deploy/compose/docker-compose.parking.yml up -d
+#
+# Required in .env: PARKING_POSTGRES_PASSWORD, MEDIAMTX_API_PASSWORD,
+# MEDIAMTX_PUBLISH_PASSWORD, MEDIAMTX_READ_PASSWORD, MEDIAMTX_VIEWER_PASSWORD,
+# MEDIAMTX_VIEWER_BASIC, SURVEILLANCE_EDGE
+# (<surveillance-host>:8443).
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+name: argus-parking
+
+volumes:
+  parking_db:
+  models_data:
+  ollama_data:
+
+networks:
+  backplane:
+    # Fixed subnet so the edge has a known address: the apps trust forwarded
+    # client addresses only from it. Containers get addresses from the lower
+    # half; the edge's fixed address is outside that range.
+    ipam:
+      config:
+        - subnet: ${ARGUS_BACKPLANE_SUBNET:-172.30.64.0/24}
+          ip_range: ${ARGUS_BACKPLANE_DYNAMIC_RANGE:-172.30.64.0/25}
+
+services:
+  parking-db:
+    <<: *hardening
+    image: postgres:15-alpine
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_USER: parking
+      POSTGRES_DB: parking
+      POSTGRES_PASSWORD: ${PARKING_POSTGRES_PASSWORD:?set PARKING_POSTGRES_PASSWORD}
+    volumes: [parking_db:/var/lib/postgresql/data]
+    networks: [backplane]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parking -d parking"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  parking:
+    <<: *hardening
+    build:
+      context: ../..
+      dockerfile: services/parking/Dockerfile
+    env_file: [../../services/parking/.env]
+    environment:
+      DEBUG: "false"
+      INTERNAL_REQUIRE_MTLS_HEADER: "true"
+      INTERNAL_ALLOW_PLAINTEXT: "false"
+      DATABASE_URL: postgresql+asyncpg://parking:${PARKING_POSTGRES_PASSWORD}@parking-db:5432/parking
+      AUTH_JWKS_URL: https://${SURVEILLANCE_EDGE:?set SURVEILLANCE_EDGE=<surveillance-host>:8443}/.well-known/jwks.json
+      SURVEILLANCE_INTERNAL_URL: https://${SURVEILLANCE_EDGE}
+      SERVICE_SIGNING_KEY_FILE: /run/secrets/argus/parking/service.key
+      CAMERA_SECRETS_KEY_FILE: /run/secrets/argus/parking/camera-secrets.key
+      FORWARDED_ALLOW_IPS: ${ARGUS_EDGE_IP:-172.30.64.200}
+      SERVICE_PEER_KEYS_DIR: /run/secrets/argus/parking/peers
+      INTERNAL_TLS_CA_FILE: /run/secrets/argus/parking/ca.pem
+      INTERNAL_TLS_CERT_FILE: /run/secrets/argus/parking/tls.pem
+      INTERNAL_TLS_KEY_FILE: /run/secrets/argus/parking/tls.key
+      MEDIAMTX_ENABLED: "true"
+      MEDIAMTX_API_BASE_URL: http://parking-mediamtx:9997
+      MEDIAMTX_API_USERNAME: mtx_api
+      MEDIAMTX_API_PASSWORD: ${MEDIAMTX_API_PASSWORD:?set MEDIAMTX_API_PASSWORD}
+      MEDIAMTX_RTSP_READ_BASE_URL: rtsp://parking-mediamtx:8554
+      MEDIAMTX_READ_USERNAME: mtx_reader
+      MEDIAMTX_READ_PASSWORD: ${MEDIAMTX_READ_PASSWORD:?set MEDIAMTX_READ_PASSWORD}
+      STREAM_HOST_ALLOWLIST: '["parking-mediamtx:8554"]'
+      PARKING_OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      - ../../deploy/pki/out/parking:/run/secrets/argus/parking:ro
+      - models_data:/app/services/parking/models:ro
+    read_only: true
+    tmpfs: [/tmp]
+    networks: [backplane]
+    depends_on:
+      parking-db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/api/v1/parking/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+
+  parking-mediamtx:
+    <<: *hardening
+    image: bluenviron/mediamtx:1.21.1
+    environment:
+      MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_API_PASSWORD}
+      MTX_AUTHINTERNALUSERS_1_PASS: ${MEDIAMTX_PUBLISH_PASSWORD:?set MEDIAMTX_PUBLISH_PASSWORD}
+      MTX_AUTHINTERNALUSERS_2_PASS: ${MEDIAMTX_READ_PASSWORD}
+      MTX_AUTHINTERNALUSERS_3_PASS: ${MEDIAMTX_VIEWER_PASSWORD:?set MEDIAMTX_VIEWER_PASSWORD (scripts/generate-secrets.sh)}
+      MTX_WEBRTCADDITIONALHOSTS: ${MEDIAMTX_PUBLIC_HOST:-127.0.0.1}
+    volumes: [../../mediamtx.yml:/mediamtx.yml:ro]
+    ports:
+      - "8554:8554"          # RTSP ingest from gate/lot camera relays
+      - "8189:8189/udp"      # WebRTC media to browsers
+    networks: [backplane]
+
+  ollama:
+    <<: *hardening
+    image: ollama/ollama:0.3.14
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    volumes: [ollama_data:/root/.ollama]
+    networks: [backplane]
+
+  ollama-model:
+    <<: *hardening
+    image: ollama/ollama:0.3.14
+    restart: "on-failure:5"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull ${PARKING_OLLAMA_MODEL:-qwen3:0.6b}"]
+    networks: [backplane]
+    depends_on: [ollama]
+
+  parking-edge:
+    <<: *hardening
+    image: nginx:1.27-alpine
+    # DAC_READ_SEARCH: the root master must read the mounted keys, which are
+    # owned by the services' uid (deploy/pki.sh). Workers run as nginx and
+    # lose all capabilities when they switch uid.
+    cap_add: [CHOWN, SETGID, SETUID, NET_BIND_SERVICE, DAC_READ_SEARCH]
+    environment:
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx/argus.d
+      PARKING_INTERNAL_PORT: "8443"
+      PARKING_UPSTREAM: parking:8100
+      PARKING_MEDIAMTX_UPSTREAM: parking-mediamtx:8889
+      # base64("mtx_viewer:<MEDIAMTX_VIEWER_PASSWORD>"), written by generate-secrets.sh.
+      MEDIAMTX_VIEWER_BASIC: ${MEDIAMTX_VIEWER_BASIC:?set MEDIAMTX_VIEWER_BASIC (scripts/generate-secrets.sh)}
+    volumes:
+      - ../../deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../deploy/nginx/snippets:/etc/nginx/snippets:ro
+      - ../../deploy/nginx/templates/00-mesh.conf.template:/etc/nginx/templates/00-mesh.conf.template:ro
+      - ../../deploy/nginx/templates/30-parking-internal.conf.template:/etc/nginx/templates/30-parking-internal.conf.template:ro
+      - ../../deploy/pki/out/ca.pem:/run/secrets/argus/ca.pem:ro
+      - ../../deploy/pki/out/parking/tls.pem:/run/secrets/argus/parking/tls.pem:ro
+      - ../../deploy/pki/out/parking/tls.key:/run/secrets/argus/parking/tls.key:ro
+    tmpfs: [/etc/nginx/argus.d, /var/cache/nginx, /var/run]
+    ports:
+      # mTLS only; firewall it to the surveillance/gateway (and face) hosts.
+      - "8443:8443"
+    networks:
+      backplane:
+        ipv4_address: ${ARGUS_EDGE_IP:-172.30.64.200}
+    depends_on: [parking, parking-mediamtx]
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

@@ -1,0 +1,215 @@
+# Argus — surveillance host (multi-machine layout).
+#
+# Runs the public gateway, the surveillance service (identity provider,
+# risk engine, security console), the dashboard and the surveillance
+# MediaMTX. Parking runs on its own host (docker-compose.parking.yml) and is
+# reached only over mutual TLS: PARKING_EDGE=<parking-host>:8443.
+#
+# Run from the repository root (compose otherwise looks for .env next to
+# this file):
+#   docker compose --env-file .env -f deploy/compose/docker-compose.surveillance.yml up -d
+#
+# Before the first `docker compose up`:
+#   1. deploy/pki.sh init                    (private CA, service keys, certs)
+#   2. scripts/generate-secrets.sh           (.env with DB/MediaMTX passwords)
+#   3. models: put the OpenVINO IR in the models_data volume (see README)
+#   4. TLS for the public name: scripts/setup-tls.sh <domain> <email>, or set
+#      PUBLIC_TLS_CERT/PUBLIC_TLS_KEY to your own certificate.
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+x-mesh-env: &mesh-env
+  DEBUG: "false"
+  INTERNAL_REQUIRE_MTLS_HEADER: "true"
+  INTERNAL_ALLOW_PLAINTEXT: "false"
+
+name: argus-surveillance
+
+volumes:
+  # A fresh project: to move an existing single-host install here, restore a
+  # pg_dump of its surveillance database into this one and copy the parking
+  # tables to the parking host with services/parking/scripts/migrate_parking_data.py.
+  postgres_data:
+  roi_events_data:
+  models_data:
+  certbot_conf:
+  certbot_www:
+
+networks:
+  # Service, database and edge traffic. Only the edge (and MediaMTX ingest)
+  # publish ports; the network keeps egress because services pull camera
+  # streams and the model runner downloads weights.
+  backplane:
+    # Fixed subnet so the edge has a known address: the apps trust forwarded
+    # client addresses only from it. Containers get addresses from the lower
+    # half; the edge's fixed address is outside that range.
+    ipam:
+      config:
+        - subnet: ${ARGUS_BACKPLANE_SUBNET:-172.30.64.0/24}
+          ip_range: ${ARGUS_BACKPLANE_DYNAMIC_RANGE:-172.30.64.0/25}
+
+services:
+  surveillance-db:
+    <<: *hardening
+    image: postgres:15-alpine
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_USER: surveillance
+      POSTGRES_DB: surveillance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD (scripts/generate-secrets.sh)}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [backplane]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U surveillance -d surveillance"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+
+  surveillance:
+    <<: *hardening
+    build:
+      context: ../..
+      dockerfile: services/surveillance/Dockerfile
+    env_file: [../../services/surveillance/.env]
+    environment:
+      <<: *mesh-env
+      DATABASE_URL: postgresql+asyncpg://surveillance:${POSTGRES_PASSWORD}@surveillance-db:5432/surveillance
+      AUTH_SIGNING_KEY_FILE: /run/secrets/argus/surveillance/auth.key
+      SERVICE_SIGNING_KEY_FILE: /run/secrets/argus/surveillance/service.key
+      CAMERA_SECRETS_KEY_FILE: /run/secrets/argus/surveillance/camera-secrets.key
+      FORWARDED_ALLOW_IPS: ${ARGUS_EDGE_IP:-172.30.64.200}
+      SERVICE_PEER_KEYS_DIR: /run/secrets/argus/surveillance/peers
+      INTERNAL_TLS_CA_FILE: /run/secrets/argus/surveillance/ca.pem
+      INTERNAL_TLS_CERT_FILE: /run/secrets/argus/surveillance/tls.pem
+      INTERNAL_TLS_KEY_FILE: /run/secrets/argus/surveillance/tls.key
+      PARKING_INTERNAL_URL: https://${PARKING_EDGE:?set PARKING_EDGE=<parking-host>:8443}
+      MEDIAMTX_ENABLED: "true"
+      MEDIAMTX_API_BASE_URL: http://mediamtx:9997
+      MEDIAMTX_API_USERNAME: mtx_api
+      MEDIAMTX_API_PASSWORD: ${MEDIAMTX_API_PASSWORD:?set MEDIAMTX_API_PASSWORD}
+      MEDIAMTX_READ_USERNAME: mtx_reader
+      MEDIAMTX_READ_PASSWORD: ${MEDIAMTX_READ_PASSWORD:?set MEDIAMTX_READ_PASSWORD}
+    volumes:
+      - ../../deploy/pki/out/surveillance:/run/secrets/argus/surveillance:ro
+      - roi_events_data:/app/services/surveillance/intrusion_monitor
+      - models_data:/app/services/surveillance/models:ro
+    read_only: true
+    tmpfs: [/tmp]
+    networks: [backplane]
+    depends_on:
+      surveillance-db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+
+
+  frontend:
+    <<: *hardening
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PRIVATE_BACKEND_URL: http://surveillance:8000
+        # Unused behind the gateway (nginx routes /api/v1/parking itself).
+        NEXT_PRIVATE_PARKING_URL: http://parking.invalid
+        NEXT_PUBLIC_API_URL: /api/v1
+        NEXT_PUBLIC_WS_URL: /ws
+        NEXT_PUBLIC_MEDIAMTX_URL: /stream
+        NEXT_PUBLIC_PARKING_MEDIAMTX_URL: /stream-parking
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+    read_only: true
+    tmpfs: [/tmp]
+    networks: [backplane]
+
+  mediamtx:
+    <<: *hardening
+    image: bluenviron/mediamtx:1.21.1
+    environment:
+      MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_API_PASSWORD}
+      MTX_AUTHINTERNALUSERS_1_PASS: ${MEDIAMTX_PUBLISH_PASSWORD:?set MEDIAMTX_PUBLISH_PASSWORD}
+      MTX_AUTHINTERNALUSERS_2_PASS: ${MEDIAMTX_READ_PASSWORD}
+      MTX_AUTHINTERNALUSERS_3_PASS: ${MEDIAMTX_VIEWER_PASSWORD:?set MEDIAMTX_VIEWER_PASSWORD (scripts/generate-secrets.sh)}
+      MTX_WEBRTCADDITIONALHOSTS: ${MEDIAMTX_PUBLIC_HOST:-127.0.0.1}
+    volumes: [../../mediamtx.yml:/mediamtx.yml:ro]
+    ports:
+      - "8554:8554"          # RTSP ingest from relays (publish needs credentials)
+      - "8189:8189/udp"      # WebRTC media (browsers)
+    networks: [backplane]
+
+
+
+  edge:
+    <<: *hardening
+    image: nginx:1.27-alpine
+    # DAC_READ_SEARCH: the root master must read the mounted keys, which are
+    # owned by the services' uid (deploy/pki.sh). Workers run as nginx and
+    # lose all capabilities when they switch uid.
+    cap_add: [CHOWN, SETGID, SETUID, NET_BIND_SERVICE, DAC_READ_SEARCH]
+    environment:
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx/argus.d
+      PUBLIC_SERVER_NAME: ${PUBLIC_SERVER_NAME:-localhost}
+      # Self-signed placeholder from deploy/pki.sh until setup-tls.sh switches
+      # these to the Let's Encrypt certificate.
+      PUBLIC_TLS_CERT: ${PUBLIC_TLS_CERT:-/etc/argus-tls/fullchain.pem}
+      PUBLIC_TLS_KEY: ${PUBLIC_TLS_KEY:-/etc/argus-tls/privkey.pem}
+      SURVEILLANCE_UPSTREAM: surveillance:8000
+      FRONTEND_UPSTREAM: frontend:3001
+      MEDIAMTX_UPSTREAM: mediamtx:8889
+      SURVEILLANCE_INTERNAL_PORT: "8443"
+      PARKING_EDGE: ${PARKING_EDGE:?set PARKING_EDGE=<parking-host>:8443}
+      PARKING_EDGE_NAME: ${PARKING_EDGE_NAME:-parking}
+      # base64("mtx_viewer:<MEDIAMTX_VIEWER_PASSWORD>"), written by generate-secrets.sh.
+      MEDIAMTX_VIEWER_BASIC: ${MEDIAMTX_VIEWER_BASIC:?set MEDIAMTX_VIEWER_BASIC (scripts/generate-secrets.sh)}
+    volumes:
+      - ../../deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../deploy/nginx/templates/00-mesh.conf.template:/etc/nginx/templates/00-mesh.conf.template:ro
+      - ../../deploy/nginx/templates/05-gateway-to-parking.snippet.template:/etc/nginx/templates/05-gateway-to-parking.snippet.template:ro
+      - ../../deploy/nginx/templates/10-gateway.conf.template:/etc/nginx/templates/10-gateway.conf.template:ro
+      - ../../deploy/nginx/templates/20-surveillance-internal.conf.template:/etc/nginx/templates/20-surveillance-internal.conf.template:ro
+      - ../../deploy/nginx/snippets:/etc/nginx/snippets:ro
+      # Only the TLS material the edge terminates: never the CA key or the
+      # services' signing keys.
+      - ../../deploy/pki/out/public:/etc/argus-tls:ro
+      - ../../deploy/pki/out/ca.pem:/run/secrets/argus/ca.pem:ro
+      - ../../deploy/pki/out/surveillance/tls.pem:/run/secrets/argus/surveillance/tls.pem:ro
+      - ../../deploy/pki/out/surveillance/tls.key:/run/secrets/argus/surveillance/tls.key:ro
+      - ../../deploy/pki/out/gateway/tls.pem:/run/secrets/argus/gateway/tls.pem:ro
+      - ../../deploy/pki/out/gateway/tls.key:/run/secrets/argus/gateway/tls.key:ro
+      - certbot_conf:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    tmpfs: [/etc/nginx/argus.d, /var/cache/nginx, /var/run]
+    ports:
+      - "80:80"
+      - "443:443"
+      # Internal mTLS listener for peers; firewall it to the parking/face hosts.
+      - "8443:8443"
+    networks:
+      backplane:
+        aliases: [edge]
+        ipv4_address: ${ARGUS_EDGE_IP:-172.30.64.200}
+    depends_on: [surveillance, frontend, mediamtx]
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  certbot:
+    image: certbot/certbot:v2.11.0
+    profiles: ["tls"]
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot

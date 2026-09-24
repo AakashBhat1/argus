@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools==80.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# An application, not a library: installing this project installs its
+# dependencies; the code runs from this directory (uvicorn app.main:app).
+[project]
+name = "argus-surveillance"
+version = "0.2.0"
+description = "Argus surveillance service: detection, risk engine, security console, auth."
+requires-python = ">=3.11"
+dependencies = [
+  "argus-common",
+  "argus-vision",
+  "fastapi==0.109.2",
+  "uvicorn[standard]==0.27.1",
+  "sqlalchemy==2.0.27",
+  "aiosqlite==0.19.0",
+  "asyncpg==0.29.0",
+  "psycopg2-binary==2.9.9",
+  "alembic==1.13.1",
+  "pydantic==2.6.1",
+  "pydantic-settings==2.1.0",
+  "python-multipart==0.0.9",
+  "websockets==12.0",
+  "httpx==0.26.0",
+  "pyyaml==6.0.2",
+  "torch==2.5.1",
+  "torchvision==0.20.1",
+  "Pillow==10.2.0",
+  "python-dotenv==1.0.1",
+  "aiofiles==23.2.1",
+  "huggingface-hub>=0.20.0",
+  "transformers>=4.40.0",
+  "passlib[bcrypt]==1.7.4",
+  "bcrypt==4.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0,<9.0.0",
+  "pytest-asyncio==1.4.0",
+]
+
+[tool.setuptools]
+packages = []
