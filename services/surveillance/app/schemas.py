@@ -19,9 +19,18 @@ class TokenData(BaseModel):
 
 
 class UserCreate(BaseModel):
-    username: str = Field(..., max_length=255)
-    password: str = Field(..., max_length=255)
+    username: str = Field(..., min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._@-]+$")
+    password: str = Field(..., min_length=12, max_length=128)
     role: str = UserRole.OPERATOR.value
+
+    @field_validator("password")
+    @classmethod
+    def _fits_bcrypt(cls, value: str) -> str:
+        # bcrypt ignores everything after 72 bytes; refuse rather than
+        # silently accept a password that is not what the user typed.
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("password must be at most 72 bytes")
+        return value
 
 
 class UserResponse(BaseModel):

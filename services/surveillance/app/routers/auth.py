@@ -1,4 +1,4 @@
-import ipaddress
+import hmac
 import logging
 from datetime import timedelta
 from typing import Optional
@@ -39,22 +39,12 @@ DUMMY_PASSWORD_HASH = get_password_hash("argus-dummy-password-that-never-authent
 
 
 def _source_ip(request: Request) -> str:
-    direct_ip = request.client.host if request.client else "unknown"
-    forwarded_ip = request.headers.get("x-real-ip")
-    if not forwarded_ip:
-        return direct_ip
+    """The client address. uvicorn derives it from X-Forwarded-For only when
+    the connection comes from the edge proxy (FORWARDED_ALLOW_IPS); request
+    headers are never trusted here, or clients could pick their address and
+    slip past the per-IP login limit."""
+    return request.client.host if request.client else "unknown"
 
-    try:
-        direct_address = ipaddress.ip_address(direct_ip)
-        forwarded_address = ipaddress.ip_address(forwarded_ip.strip())
-    except ValueError:
-        return direct_ip
-
-    # The deployed backend is reachable through the local/private Nginx proxy,
-    # which overwrites X-Real-IP. Never trust that header from a public peer.
-    if direct_address.is_loopback or direct_address.is_private:
-        return str(forwarded_address)
-    return direct_ip
 
 async def _authenticate(request: Request, username: str, password: str, db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.username == username))
@@ -64,7 +54,8 @@ async def _authenticate(request: Request, username: str, password: str, db: Asyn
     password_matches = verify_password(password, password_hash)
     credentials_valid = user is not None and password_matches and bool(user.is_active)
     source_ip = _source_ip(request)
-    decision = login_attempt_limiter.evaluate(
+    decision = await login_attempt_limiter.decide(
+        db,
         source_ip=source_ip,
         username=username,
         credentials_valid=credentials_valid,
@@ -167,18 +158,38 @@ async def logout(request: Request, db: AsyncSession = Depends(get_db)):
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
 
+BOOTSTRAP_TOKEN_HEADER = "X-Argus-Bootstrap-Token"
+
+
+def _bootstrap_allowed(request: Request) -> bool:
+    settings = get_settings()
+    if settings.DEBUG:
+        return True
+    expected = settings.AUTH_BOOTSTRAP_TOKEN or ""
+    presented = request.headers.get(BOOTSTRAP_TOKEN_HEADER, "")
+    return len(expected) >= 32 and hmac.compare_digest(presented.encode(), expected.encode())
+
+
 @router.post("/users", response_model=UserResponse)
 async def create_user(
     user: UserCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user),
 ):
-    # Bootstrap rule: the very first user may be created anonymously and is
-    # forced to admin (there is no one else who could grant the role). Once
-    # any user exists, only an authenticated admin may create accounts.
+    # Bootstrap rule: the very first user becomes the administrator (nobody
+    # else could grant the role). Whoever reaches a fresh deployment first
+    # must not get it, so outside DEBUG this needs the bootstrap token (or
+    # the shell: python -m app.cli.create_admin). Once any user exists, only
+    # an authenticated admin may create accounts.
     user_count = (await db.execute(select(func.count(User.id)))).scalar() or 0
 
     if user_count == 0:
+        if not _bootstrap_allowed(request):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Create the first administrator with `python -m app.cli.create_admin` on the server",
+            )
         role = UserRole.ADMIN.value
         tenant_id = "1"
     else:

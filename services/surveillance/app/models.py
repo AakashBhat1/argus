@@ -283,3 +283,25 @@ class AuthSession(Base):
     used_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
     user_agent = Column(String(200), nullable=True)
+
+
+class LoginFailure(Base):
+    """One failed sign-in, keyed by an HMAC of the username or source IP."""
+
+    __tablename__ = "login_failures"
+    __table_args__ = (Index("ix_login_failures_subject_time", "subject", "failed_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    subject = Column(String(64), nullable=False)
+    failed_at = Column(Float, nullable=False)
+
+
+class LoginLockout(Base):
+    """Progressive lockout state of one username (HMAC)."""
+
+    __tablename__ = "login_lockouts"
+
+    subject = Column(String(64), primary_key=True)
+    locked_until = Column(Float, nullable=False, default=0.0)
+    lockout_level = Column(Integer, nullable=False, default=0)
+    last_failure_at = Column(Float, nullable=False, default=0.0)

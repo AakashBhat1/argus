@@ -92,7 +92,8 @@ app.include_router(internal.router)
 
 @app.get("/api/v1/parking/health")
 async def health():
-    return {"status": "healthy", "active_streams": stream_manager.active_count}
+    # Public liveness only; stream state is behind /parking/streams/status.
+    return {"status": "healthy"}
 
 
 async def _serve_channel(websocket: WebSocket, channel: str) -> None:

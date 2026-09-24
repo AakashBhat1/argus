@@ -2,7 +2,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
@@ -11,9 +11,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import get_settings
 from app.database import get_session_factory, init_db
 from app.detection import detector
-from app.models import Camera
+from app.models import Camera, User
 from app.routers import alerts, analytics, cameras, crime, detections, intents, internal, metrics, roboflow, security, streams, videos, zones, auth
-from app.services.auth import authenticate_websocket, jwks_document, signing_key
+from app.services.auth import authenticate_websocket, get_current_active_user, jwks_document, signing_key
 from app.services.camera_secrets import camera_secret_box, seal_stored_stream_urls
 from argus_common.web_auth import WS_AUTH_CLOSE_CODE, hold_until_expiry
 from argus_vision.inference_worker import InferenceWorkerPool
@@ -142,6 +142,12 @@ async def jwks_endpoint():
 
 @app.get("/api/v1/health")
 async def health_check():
+    """Liveness for load balancers and container health checks; reveals nothing."""
+    return {"status": "healthy"}
+
+
+@app.get("/api/v1/health/details")
+async def health_details(current_user: User = Depends(get_current_active_user)):
     pool_metrics = inference_pool.get_metrics() if inference_pool else {}
     return {
         "status": "healthy",

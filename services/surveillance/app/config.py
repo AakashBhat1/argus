@@ -71,6 +71,10 @@ class Settings(VisionSettings, ServiceMeshSettings):
     # 32-byte key sealing camera credentials in the database (deploy/pki.sh).
     # Required unless DEBUG. Retired keys (*.key) stay readable for rotation.
     CAMERA_SECRETS_KEY_FILE: str | None = None
+    # One-time secret allowing the first administrator to be created over
+    # HTTP (X-Argus-Bootstrap-Token). Without it, production deployments
+    # create the first admin from the shell: python -m app.cli.create_admin
+    AUTH_BOOTSTRAP_TOKEN: str | None = None
     CAMERA_SECRETS_PREVIOUS_KEYS_DIR: str | None = None
 
     # Local SQLite DB for the classifier-only service

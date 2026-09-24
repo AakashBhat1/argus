@@ -47,6 +47,13 @@ networks:
   # publish ports; the network keeps egress because services pull camera
   # streams and the model runner downloads weights.
   backplane:
+    # Fixed subnet so the edge has a known address: the apps trust forwarded
+    # client addresses only from it. Containers get addresses from the lower
+    # half; the edge's fixed address is outside that range.
+    ipam:
+      config:
+        - subnet: ${ARGUS_BACKPLANE_SUBNET:-172.30.64.0/24}
+          ip_range: ${ARGUS_BACKPLANE_DYNAMIC_RANGE:-172.30.64.0/25}
 
 services:
   surveillance-db:
@@ -78,6 +85,7 @@ services:
       AUTH_SIGNING_KEY_FILE: /run/secrets/argus/surveillance/auth.key
       SERVICE_SIGNING_KEY_FILE: /run/secrets/argus/surveillance/service.key
       CAMERA_SECRETS_KEY_FILE: /run/secrets/argus/surveillance/camera-secrets.key
+      FORWARDED_ALLOW_IPS: ${ARGUS_EDGE_IP:-172.30.64.200}
       SERVICE_PEER_KEYS_DIR: /run/secrets/argus/surveillance/peers
       INTERNAL_TLS_CA_FILE: /run/secrets/argus/surveillance/ca.pem
       INTERNAL_TLS_CERT_FILE: /run/secrets/argus/surveillance/tls.pem
@@ -191,6 +199,7 @@ services:
     networks:
       backplane:
         aliases: [edge]
+        ipv4_address: ${ARGUS_EDGE_IP:-172.30.64.200}
     depends_on: [surveillance, frontend, mediamtx]
     healthcheck:
       test: ["CMD", "nginx", "-t"]

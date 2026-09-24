@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User, UserRole
@@ -109,11 +109,14 @@ async def _login(
     password: str,
     source_ip: str = "203.0.113.10",
 ):
-    return await client.post(
-        "/api/v1/auth/token",
-        data={"username": username, "password": password},
-        headers={"X-Real-IP": source_ip},
-    )
+    # The client address is the connection's (uvicorn resolves it from the
+    # edge's X-Forwarded-For); request headers never choose it.
+    transport = ASGITransport(app=client._transport.app, client=(source_ip, 50000))
+    async with AsyncClient(transport=transport, base_url="http://test") as per_ip:
+        return await per_ip.post(
+            "/api/v1/auth/token",
+            data={"username": username, "password": password},
+        )
 
 
 @pytest.mark.asyncio
@@ -306,3 +309,36 @@ def test_recent_lockout_survives_sweeps_and_preserves_escalation_level():
         credentials_valid=True,
     )
     assert "recently-locked" not in limiter._username_states
+
+
+
+@pytest.mark.asyncio
+async def test_forwarding_headers_cannot_pick_the_source_address(
+    anon_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    """Rotating X-Real-IP / X-Forwarded-For values must not reset the per-IP limit."""
+    limiter = LoginAttemptLimiter(
+        username_failure_limit=100,
+        username_window_seconds=60.0,
+        base_lockout_seconds=30.0,
+        max_lockout_seconds=120.0,
+        ip_failure_limit=3,
+        ip_window_seconds=60.0,
+        clock=FakeClock(),
+    )
+    monkeypatch.setattr(auth_router, "login_attempt_limiter", limiter)
+    await _create_user(db_session, "spoof-target", "correct-password")
+    for i in range(3):
+        await anon_client.post(
+            "/api/v1/auth/token",
+            data={"username": f"guess-{i}", "password": "wrong"},
+            headers={"X-Real-IP": f"198.51.100.{i}", "X-Forwarded-For": f"192.0.2.{i}"},
+        )
+    blocked = await anon_client.post(
+        "/api/v1/auth/token",
+        data={"username": "spoof-target", "password": "correct-password"},
+        headers={"X-Real-IP": "198.51.100.99", "X-Forwarded-For": "192.0.2.99"},
+    )
+    assert blocked.status_code == 401

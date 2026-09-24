@@ -684,7 +684,7 @@ export const api = {
     },
   },
 
-  health: () => fetchApi<HealthStatus>("/health"),
+  health: () => fetchApi<HealthStatus>("/health/details"),
   parking: {
     stats: () => fetchApi<ParkingStats>("/parking/stats"),
     spaces: () => fetchApi<ParkingSpace[]>("/parking/spaces"),
