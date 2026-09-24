@@ -6,7 +6,9 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'"
   },
   "dependencies": {
     "clsx": "2.1.0",

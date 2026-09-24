@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { isAuthenticated } from "@/lib/auth";
 import { Shield } from "lucide-react";
+
+function subscribeToStorage(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+}
 
 export default function ProtectedRoute({
   children,
@@ -11,15 +16,19 @@ export default function ProtectedRoute({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const [authorized, setAuthorized] = useState(false);
+  // Read the session flag as an external store: false during server render,
+  // the real value on the client, without an extra render from an effect.
+  const authorized = useSyncExternalStore(
+    subscribeToStorage,
+    isAuthenticated,
+    () => false,
+  );
 
   useEffect(() => {
     if (!isAuthenticated()) {
       router.replace("/login");
-    } else {
-      setAuthorized(true);
     }
-  }, [router]);
+  }, [router, authorized]);
 
   if (!authorized) {
     return (

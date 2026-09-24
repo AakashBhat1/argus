@@ -229,6 +229,7 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
             {currentFeed.media_transport === "webrtc" ? (
               <WebRTCPlayer cameraId={currentFeed.camera_id} />
             ) : currentFeed.frame_image ? (
+              // eslint-disable-next-line @next/next/no-img-element -- live base64 JPEG frames; next/image optimisation does not apply
               <img
                 src={`data:image/jpeg;base64,${currentFeed.frame_image}`}
                 alt="Live feed"

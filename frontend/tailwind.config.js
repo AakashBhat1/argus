@@ -4,7 +4,9 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Inter", "system-ui", "sans-serif"],
+        // No third-party font CDN: the dashboard makes no requests outside its
+        // own origin (privacy, and a strict CSP). Inter is used if installed.
+        sans: ["Inter", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
       },
       colors: {
         slate: {

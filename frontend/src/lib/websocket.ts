@@ -17,8 +17,22 @@ function resolveWsBase(): string {
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
-export function useWebSocket(channel: string) {
+/**
+ * Subscribe to an authenticated Argus WebSocket channel.
+ *
+ * Prefer `onMessage` for reacting to events: it runs in the socket callback,
+ * so consumers update state there instead of mirroring `lastMessage` into
+ * state from an effect (which costs an extra render per message).
+ */
+export function useWebSocket(
+  channel: string | null,
+  onMessage?: (message: FeedMessage) => void,
+) {
   const [lastMessage, setLastMessage] = useState<FeedMessage | null>(null);
+  const onMessageRef = useRef(onMessage);
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
   const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,6 +61,7 @@ export function useWebSocket(channel: string) {
       try {
         const msg = JSON.parse(event.data) as FeedMessage;
         setLastMessage(msg);
+        onMessageRef.current?.(msg);
       } catch {
         // ignore parse errors
       }

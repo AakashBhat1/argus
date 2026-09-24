@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useReducer, useRef, useState, useCallback } from "react";
 import { Camera as CameraIcon, Map, RefreshCw, Loader2, Video, AlertCircle } from "lucide-react";
-import { api, Camera, ParkingSpace } from "@/lib/api";
+import { api, Camera, ParkingSpace, type FeedMessage } from "@/lib/api";
+import { containedPointToNormalized } from "@/lib/geometry";
 import { useWebSocket } from "@/lib/websocket";
 import SlotMapper from "./SlotMapper";
 import { cn } from "@/lib/utils";
@@ -43,104 +44,86 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
   // Mapper modal state
   const [showMapper, setShowMapper] = useState(false);
 
-  // Real-time WebSocket connection to the SELECTED CAMERA's channel
-  const { lastMessage } = useWebSocket(selectedCameraId);
-
-  // Fetch parking cameras & initial slots
+  // Fetch parking cameras once; slots load when a camera is selected.
   useEffect(() => {
-    loadCameras();
+    let cancelled = false;
+    api.cameras
+      .list()
+      .then((camList) => {
+        if (cancelled) return;
+        // Prefer cameras with role === 'parking'; fall back to any active camera.
+        let parkingCams = camList.filter((c) => (c.status === "active" || c.is_active) && c.role === "parking");
+        if (parkingCams.length === 0) {
+          parkingCams = camList.filter((c) => c.status === "active" || c.is_active);
+        }
+        setCameras(parkingCams);
+        if (parkingCams.length > 0) setSelectedCameraId(parkingCams[0].id);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load cameras");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  async function loadCameras() {
-    setLoading(true);
-    setError(null);
-    try {
-      const camList = await api.cameras.list();
-      // Filter specifically for cameras with role === 'parking'
-      let parkingCams = camList.filter((c) => (c.status === "active" || c.is_active) && c.role === "parking");
-      if (parkingCams.length === 0) {
-        // Fallback to all active cameras if none are tagged with role='parking' yet
-        parkingCams = camList.filter((c) => c.status === "active" || c.is_active);
-      }
-      setCameras(parkingCams);
-
-      if (parkingCams.length > 0) {
-        const initialId = parkingCams[0].id;
-        setSelectedCameraId(initialId);
-        await loadCameraData(initialId);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load cameras";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const loadCameraData = useCallback(async (cameraId: string) => {
-    if (!cameraId) return;
-    try {
-      const [snap, slotsList] = await Promise.all([
-        api.streams.snapshot(cameraId).catch(() => null),
-        api.parking.slots(cameraId).catch(() => []),
-      ]);
-
-      if (snap) {
-        setCurrentFrame(snap.image);
-      }
-
-      const parsed: SlotPolygon[] = slotsList.map((s) => ({
-        space_id: s.space_id,
-        polygon: (s.polygon || []).map((pt) => ({ x: pt[0], y: pt[1] })),
-      }));
-      setSlotPolygons(parsed);
-    } catch (err) {
-      console.error("Error loading camera data:", err);
-    }
-  }, []);
-
+  // Snapshot + slot polygons for the selected camera; `reloadCameraData`
+  // re-runs this after a retry or a slot-mapper save.
+  const [cameraDataKey, reloadCameraData] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
-    if (selectedCameraId) {
-      loadCameraData(selectedCameraId);
-    }
-  }, [selectedCameraId, loadCameraData]);
+    if (!selectedCameraId) return;
+    let cancelled = false;
+    Promise.all([
+      api.streams.snapshot(selectedCameraId).catch(() => null),
+      api.parking.slots(selectedCameraId).catch(() => []),
+    ])
+      .then(([snap, slotsList]) => {
+        if (cancelled) return;
+        if (snap) setCurrentFrame(snap.image);
+        setSlotPolygons(
+          slotsList.map((s) => ({
+            space_id: s.space_id,
+            polygon: (s.polygon || []).map((pt) => ({ x: pt[0], y: pt[1] })),
+          })),
+        );
+      })
+      .catch((err) => console.error("Error loading camera data:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCameraId, cameraDataKey]);
 
-  // Handle incoming real-time WS messages from camera channel
-  useEffect(() => {
-    if (!lastMessage) return;
-
-    const msgType = lastMessage.type;
-    const data = lastMessage.data || lastMessage;
+  // Real-time messages on the SELECTED CAMERA's channel.
+  const handleCameraMessage = useCallback((message: FeedMessage) => {
+    const msgType = message.type;
+    const data: any = message.data || message;
+    const mergeSlots = (slotsArr: unknown) => {
+      if (!Array.isArray(slotsArr)) return;
+      const map: Record<string, { occupied: boolean; score?: number }> = {};
+      slotsArr.forEach((s: any) => {
+        map[s.space_id] = { occupied: !!s.occupied, score: s.score };
+      });
+      setOccupancyMap((prev) => ({ ...prev, ...map }));
+    };
 
     if (msgType === "detections") {
       setMediaTransport(data.media_transport === "webrtc" ? "webrtc" : "websocket_jpeg");
       if (data.frame_width && data.frame_height) {
         setFrameSize({ width: data.frame_width, height: data.frame_height });
       }
-      // 1. Per-frame live view updates
       if (data.frame_image) {
         setCurrentFrame(data.frame_image);
       }
-      const slotsArr = data.parking_slots || data.slots;
-      if (slotsArr && Array.isArray(slotsArr)) {
-        const map: Record<string, { occupied: boolean; score?: number }> = {};
-        slotsArr.forEach((s: any) => {
-          map[s.space_id] = { occupied: !!s.occupied, score: s.score };
-        });
-        setOccupancyMap((prev) => ({ ...prev, ...map }));
-      }
+      mergeSlots(data.parking_slots || data.slots);
     } else if (msgType === "parking") {
-      // 2. Committed transition updates (read data.slots)
-      const slotsArr = data.slots || data.parking_slots;
-      if (slotsArr && Array.isArray(slotsArr)) {
-        const map: Record<string, { occupied: boolean; score?: number }> = {};
-        slotsArr.forEach((s: any) => {
-          map[s.space_id] = { occupied: !!s.occupied, score: s.score };
-        });
-        setOccupancyMap((prev) => ({ ...prev, ...map }));
-      }
+      // Committed transitions.
+      mergeSlots(data.slots || data.parking_slots);
     }
-  }, [lastMessage]);
+  }, []);
+  useWebSocket(selectedCameraId || null, handleCameraMessage);
 
   // Canvas Drawing
   const drawOverlay = useCallback(() => {
@@ -220,14 +203,19 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX / canvas.width;
-    const y = (e.clientY - rect.top) * scaleY / canvas.height;
+    // The canvas is drawn with object-fit: contain, so account for the
+    // letterbox bars when mapping the click into frame coordinates.
+    const point = containedPointToNormalized(
+      canvas.getBoundingClientRect(),
+      canvas.width,
+      canvas.height,
+      e.clientX,
+      e.clientY,
+    );
+    if (!point) return;
 
     for (const slot of slotPolygons) {
-      if (pointInPolygon({ x, y }, slot.polygon)) {
+      if (pointInPolygon(point, slot.polygon)) {
         const spaceMeta = spaces.find((s) => s.space_id === slot.space_id);
         const liveState = occupancyMap[slot.space_id];
         const isOccupied = liveState ? liveState.occupied : spaceMeta?.is_occupied ?? false;
@@ -325,7 +313,7 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
             <p className="text-xs text-slate-400">No snapshot available for camera</p>
             {selectedCameraId && (
               <button
-                onClick={() => loadCameraData(selectedCameraId)}
+                onClick={reloadCameraData}
                 className="mt-2 text-xs text-violet-400 flex items-center gap-1 hover:underline"
               >
                 <RefreshCw className="w-3 h-3" /> Retry capture
@@ -365,7 +353,7 @@ export default function LiveLotView({ spaces, onReleaseSpace }: LiveLotViewProps
           cameraId={selectedCameraId}
           cameraName={selectedCam ? (isFallback ? `${selectedCam.name} (Non-parking fallback)` : selectedCam.name) : "Parking Camera"}
           onClose={() => setShowMapper(false)}
-          onSaved={() => loadCameraData(selectedCameraId)}
+          onSaved={reloadCameraData}
         />
       )}
     </div>

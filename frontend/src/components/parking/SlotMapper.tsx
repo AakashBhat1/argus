@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { containedPointToNormalized } from "@/lib/geometry";
 
 interface Point {
   x: number;
@@ -69,35 +70,34 @@ export default function SlotMapper({ cameraId, cameraName, onClose, onSaved }: S
   const [replicateCount, setReplicateCount] = useState(5);
   const [stepDirection, setStepDirection] = useState<"horizontal" | "vertical">("horizontal");
 
-  // Load snapshot & existing slots
+  // Load snapshot & existing slots for the camera.
   useEffect(() => {
-    loadData();
+    let cancelled = false;
+    Promise.all([api.streams.snapshot(cameraId), api.parking.slots(cameraId)])
+      .then(([snap, slotList]) => {
+        if (cancelled) return;
+        setSnapshot(snap.image);
+        setSnapshotSize({ width: snap.width, height: snap.height });
+        setSlots(
+          slotList.map((s) => ({
+            space_id: s.space_id,
+            polygon: (s.polygon || []).map((pt) => ({ x: pt[0], y: pt[1] })),
+          })),
+        );
+        setError(null);
+        setConflictBays([]);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load snapshot or slots");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [cameraId]);
-
-  async function loadData() {
-    setLoading(true);
-    setError(null);
-    setConflictBays([]);
-    try {
-      const [snap, slotList] = await Promise.all([
-        api.streams.snapshot(cameraId),
-        api.parking.slots(cameraId),
-      ]);
-      setSnapshot(snap.image);
-      setSnapshotSize({ width: snap.width, height: snap.height });
-
-      const loadedSlots: SlotItem[] = slotList.map((s) => ({
-        space_id: s.space_id,
-        polygon: (s.polygon || []).map((pt) => ({ x: pt[0], y: pt[1] })),
-      }));
-      setSlots(loadedSlots);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load snapshot or slots";
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   // Draw canvas
   const draw = useCallback(() => {
@@ -221,11 +221,9 @@ export default function SlotMapper({ cameraId, cameraName, onClose, onSaved }: S
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = Math.round(((e.clientX - rect.left) * scaleX / canvas.width) * 10000) / 10000;
-    const y = Math.round(((e.clientY - rect.top) * scaleY / canvas.height) * 10000) / 10000;
+    const point = canvasPoint(canvas, e);
+    if (!point) return;
+    const { x, y } = point;
 
     if (!isDrawing) {
       // Check if clicking inside an existing slot to select it
@@ -262,6 +260,19 @@ export default function SlotMapper({ cameraId, cameraName, onClose, onSaved }: S
     }
   }
 
+  // Normalized click position on the snapshot, rounded to 4 decimals.
+  function canvasPoint(canvas: HTMLCanvasElement, e: React.MouseEvent<HTMLCanvasElement>): Point | null {
+    const point = containedPointToNormalized(
+      canvas.getBoundingClientRect(),
+      canvas.width,
+      canvas.height,
+      e.clientX,
+      e.clientY,
+    );
+    if (!point) return null;
+    return { x: Math.round(point.x * 10000) / 10000, y: Math.round(point.y * 10000) / 10000 };
+  }
+
   function pointInPolygon(pt: Point, poly: Point[]): boolean {
     if (poly.length < 3) return false;
     let inside = false;
@@ -280,11 +291,9 @@ export default function SlotMapper({ cameraId, cameraName, onClose, onSaved }: S
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const x = Math.round(((e.clientX - rect.left) * scaleX / canvas.width) * 10000) / 10000;
-    const y = Math.round(((e.clientY - rect.top) * scaleY / canvas.height) * 10000) / 10000;
+    const point = canvasPoint(canvas, e);
+    if (!point) return;
+    const { x, y } = point;
     setHoverPoint({ x, y });
   }
 

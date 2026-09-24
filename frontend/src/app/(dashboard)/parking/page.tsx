@@ -7,6 +7,7 @@ import {
   type ParkingStats,
   type ParkingActivity,
   type ReleaseSpace,
+  type FeedMessage,
 } from "@/lib/api";
 import { useWebSocket } from "@/lib/websocket";
 import LiveLotView from "@/components/parking/LiveLotView";
@@ -46,8 +47,19 @@ export default function ParkingDashboardPage() {
   // Custom Toast State
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  // Subscribe to tenant-scoped websocket channel "parking"
-  const { lastMessage, isConnected } = useWebSocket("parking");
+
+  // Helper to add toast notification
+  const addToast = useCallback((type: "success" | "warning" | "info", title: string, message: string) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const newToast = { id, type, title, message, time };
+    setToasts((prev) => [newToast, ...prev].slice(0, 5)); // Keep last 5 toasts
+
+    // Auto-dismiss after 6 seconds
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 6000);
+  }, []);
 
   // Load data from API
   const loadData = useCallback(async (quiet = false) => {
@@ -67,20 +79,7 @@ export default function ParkingDashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  // Helper to add toast notification
-  const addToast = useCallback((type: "success" | "warning" | "info", title: string, message: string) => {
-    const id = Math.random().toString(36).substring(2, 9);
-    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    const newToast = { id, type, title, message, time };
-    setToasts((prev) => [newToast, ...prev].slice(0, 5)); // Keep last 5 toasts
-
-    // Auto-dismiss after 6 seconds
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 6000);
-  }, []);
+  }, [addToast]);
 
   // Set mounted check for Next.js SSR
   useEffect(() => {
@@ -90,34 +89,32 @@ export default function ParkingDashboardPage() {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // Handle WebSocket updates
-  useEffect(() => {
-    if (!lastMessage) return;
+  // Live parking events
+  const handleParkingMessage = useCallback((message: FeedMessage) => {
+    if (message.type !== "parking" || !message.data) return;
+    const { event, space_id, plate_text, assign } = message.data;
 
-    if (lastMessage.type === "parking" && lastMessage.data) {
-      const { event, space_id, plate_text, assign } = lastMessage.data;
-
-      if (event === "plate_detected") {
-        if (assign) {
-          addToast(
-            assign.profile_type === "blacklist" ? "warning" : "success",
-            "Vehicle Ingested",
-            `Plate ${plate_text} detected. Assigned space ${assign.space_id}.`
-          );
-        } else {
-          addToast("info", "Plate Recognized", `OCR detected plate: ${plate_text}`);
-        }
-        loadData(true);
-      } else if (event === "exit") {
+    if (event === "plate_detected") {
+      if (assign) {
         addToast(
-          "success",
-          "Space Released",
-          `Space ${space_id} released. Plate ${plate_text || "N/A"} checked out.`
+          assign.profile_type === "blacklist" ? "warning" : "success",
+          "Vehicle Ingested",
+          `Plate ${plate_text} detected. Assigned space ${assign.space_id}.`
         );
-        loadData(true);
+      } else {
+        addToast("info", "Plate Recognized", `OCR detected plate: ${plate_text}`);
       }
+      loadData(true);
+    } else if (event === "exit") {
+      addToast(
+        "success",
+        "Space Released",
+        `Space ${space_id} released. Plate ${plate_text || "N/A"} checked out.`
+      );
+      loadData(true);
     }
-  }, [lastMessage, loadData, addToast]);
+  }, [loadData, addToast]);
+  const { isConnected } = useWebSocket("parking", handleParkingMessage);
 
 
 

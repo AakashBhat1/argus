@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import {
   Bell,
   CheckCircle,
@@ -11,7 +11,7 @@ import {
   Filter,
   Loader2,
 } from "lucide-react";
-import { api, type Alert } from "@/lib/api";
+import { api, type Alert, type FeedMessage } from "@/lib/api";
 import { useWebSocket } from "@/lib/websocket";
 import { cn, severityColor, formatTimestamp } from "@/lib/utils";
 
@@ -38,50 +38,51 @@ export default function AlertsPage() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { lastMessage } = useWebSocket("alerts");
+  // Bumped to re-fetch after an action or a live alert.
+  const [reloadKey, reload] = useReducer((n: number) => n + 1, 0);
+  const handleLiveMessage = useCallback((message: FeedMessage) => {
+    if (message.type === "alert") reload();
+  }, []);
+  useWebSocket("alerts", handleLiveMessage);
 
   useEffect(() => {
-    loadAlerts();
-    loadStats();
-  }, [filter]);
+    let cancelled = false;
+    const params: Record<string, string> = { limit: "50" };
+    if (filter.status) params.status = filter.status;
+    if (filter.severity) params.severity = filter.severity;
 
-  useEffect(() => {
-    if (lastMessage?.type === "alert") {
-      loadAlerts();
-      loadStats();
-    }
-  }, [lastMessage]);
+    api.alerts
+      .list(params)
+      .then((data) => {
+        if (cancelled) return;
+        setAlerts(data);
+        setError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError("Failed to load alerts");
+        console.error("Failed to load alerts:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-  async function loadAlerts() {
-    try {
-      setError(null);
-      const params: Record<string, string> = { limit: "50" };
-      if (filter.status) params.status = filter.status;
-      if (filter.severity) params.severity = filter.severity;
-      const data = await api.alerts.list(params);
-      setAlerts(data);
-    } catch (err) {
-      setError("Failed to load alerts");
-      console.error("Failed to load alerts:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
+    api.alerts
+      .stats()
+      .then((data) => {
+        if (!cancelled) setStats(data);
+      })
+      .catch((err) => console.error("Failed to load alert stats:", err));
 
-  async function loadStats() {
-    try {
-      const data = await api.alerts.stats();
-      setStats(data);
-    } catch (err) {
-      console.error("Failed to load alert stats:", err);
-    }
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [filter, reloadKey]);
 
   async function handleAcknowledge(id: string) {
     try {
       await api.alerts.acknowledge(id);
-      loadAlerts();
-      loadStats();
+      reload();
     } catch (err) {
       console.error(err);
     }
@@ -90,8 +91,7 @@ export default function AlertsPage() {
   async function handleResolve(id: string) {
     try {
       await api.alerts.resolve(id);
-      loadAlerts();
-      loadStats();
+      reload();
     } catch (err) {
       console.error(err);
     }
@@ -161,7 +161,7 @@ export default function AlertsPage() {
             <AlertTriangle className="w-7 h-7 text-red-500/50" />
           </div>
           <p className="text-sm text-slate-400">{error}</p>
-          <button onClick={loadAlerts} className="btn-primary mt-4 mx-auto">
+          <button onClick={reload} className="btn-primary mt-4 mx-auto">
             Retry
           </button>
         </div>
