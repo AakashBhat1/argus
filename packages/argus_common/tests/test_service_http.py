@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI
 
 from argus_common.keys import SigningKey
 from argus_common.service_http import (
+    MTLS_CLIENT_SERVICE_HEADER,
     MTLS_VERIFIED_HEADER,
     SERVICE_TOKEN_HEADER,
     MtlsConfig,
@@ -68,9 +69,17 @@ async def test_mtls_header_required_when_configured():
         assert (await client.post("/internal/v1/events", headers={SERVICE_TOKEN_HEADER: token})).status_code == 403
         token = signer.token_for("surveillance", ["events:publish"])
         ok = await client.post(
-            "/internal/v1/events", headers={SERVICE_TOKEN_HEADER: token, MTLS_VERIFIED_HEADER: "SUCCESS"}
+            "/internal/v1/events",
+            headers={SERVICE_TOKEN_HEADER: token, MTLS_VERIFIED_HEADER: "SUCCESS", MTLS_CLIENT_SERVICE_HEADER: "parking"},
         )
         assert ok.status_code == 200
+        # A parking token presented over the face service's certificate.
+        token = signer.token_for("surveillance", ["events:publish"])
+        mismatched = await client.post(
+            "/internal/v1/events",
+            headers={SERVICE_TOKEN_HEADER: token, MTLS_VERIFIED_HEADER: "SUCCESS", MTLS_CLIENT_SERVICE_HEADER: "face"},
+        )
+        assert mismatched.status_code == 403
 
 
 def test_plaintext_internal_endpoints_are_refused_by_default():

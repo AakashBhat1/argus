@@ -1,0 +1,53 @@
+# Parking host listener (mutual TLS). Everything reaching parking arrives
+# here: service calls from peers under /internal, and user traffic that the
+# public gateway forwards (API, WebSocket, WHEP) with its own certificate.
+# Environment:
+#   PARKING_INTERNAL_PORT   default 8443 (8444 in the single-host stack)
+#   PARKING_UPSTREAM        default parking:8100
+#   PARKING_MEDIAMTX_UPSTREAM default parking-mediamtx:8889
+
+upstream parking_api { server ${PARKING_UPSTREAM}; keepalive 16; }
+
+server {
+    listen ${PARKING_INTERNAL_PORT} ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /run/secrets/argus/parking/tls.pem;
+    ssl_certificate_key /run/secrets/argus/parking/tls.key;
+    include /etc/nginx/snippets/internal-tls.conf;
+
+    client_max_body_size 10m;
+
+    location /internal/ {
+        if ($argus_client_cn !~ "^(surveillance|face)$") { return 403; }
+        include /etc/nginx/snippets/mesh-identity.conf;
+        proxy_pass http://parking_api;
+    }
+
+    # User traffic relayed by the public gateway (users authenticate with
+    # their access token inside; the gateway certificate only proves the
+    # request came through the gateway).
+    location /api/v1/parking/ {
+        if ($argus_client_cn != "gateway") { return 403; }
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Argus-Client-Verified "";
+        proxy_set_header X-Argus-Client-Service "";
+        proxy_pass http://parking_api;
+    }
+    location /ws/parking {
+        if ($argus_client_cn != "gateway") { return 403; }
+        include /etc/nginx/snippets/websocket.conf;
+        proxy_set_header Host $host;
+        proxy_set_header X-Argus-Client-Verified "";
+        proxy_set_header X-Argus-Client-Service "";
+        proxy_pass http://parking_api;
+    }
+    location /stream/ {
+        if ($argus_client_cn != "gateway") { return 403; }
+        proxy_pass http://${PARKING_MEDIAMTX_UPSTREAM}/;
+    }
+    location / { return 404; }
+}

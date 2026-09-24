@@ -35,8 +35,10 @@ ensure_env_var() {
 
 echo "==> Root .env (docker compose secrets)"
 ensure_env_var .env POSTGRES_PASSWORD          "$(rand 24)"
+ensure_env_var .env PARKING_POSTGRES_PASSWORD  "$(rand 24)"
 ensure_env_var .env MEDIAMTX_API_PASSWORD      "$(rand 16)"
 ensure_env_var .env MEDIAMTX_PUBLISH_PASSWORD  "$(rand 16)"
+ensure_env_var .env MEDIAMTX_READ_PASSWORD     "$(rand 16)"
 # Public IP/domain advertised in WebRTC ICE candidates; setup-tls.sh sets
 # this to the domain. Until then, default to this host's public IP.
 if ! grep -q '^MEDIAMTX_PUBLIC_HOST=' .env; then
@@ -53,8 +55,19 @@ if [ ! -f "$BACKEND_ENV" ] && [ -f "services/surveillance/.env.example" ]; then
   echo "  created from .env.example"
 fi
 ensure_env_var "$BACKEND_ENV" SECRET_KEY "$(rand 32)"
-ensure_env_var "$BACKEND_ENV" ACCESS_TOKEN_EXPIRE_MINUTES "1440"
 chmod 600 "$BACKEND_ENV"
+
+PARKING_ENV="services/parking/.env"
+echo "==> Parking env ($PARKING_ENV)"
+if [ ! -f "$PARKING_ENV" ] && [ -f "services/parking/.env.example" ]; then
+  cp services/parking/.env.example "$PARKING_ENV"
+  echo "  created from .env.example"
+fi
+chmod 600 "$PARKING_ENV"
+
+if [ ! -f deploy/pki/out/ca.pem ]; then
+  echo "==> No PKI yet: run deploy/pki.sh init (service keys and mTLS certificates)"
+fi
 
 cat <<'EOF'
 

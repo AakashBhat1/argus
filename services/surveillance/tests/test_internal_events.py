@@ -19,7 +19,7 @@ from argus_common.events import (
     VehicleTheftSuspected,
 )
 from argus_common.keys import SigningKey
-from argus_common.service_http import MTLS_VERIFIED_HEADER, SERVICE_TOKEN_HEADER
+from argus_common.service_http import MTLS_CLIENT_SERVICE_HEADER, MTLS_VERIFIED_HEADER, SERVICE_TOKEN_HEADER
 from argus_common.tokens import PeerPolicy, ServiceTokenSigner, ServiceTokenVerifier
 
 from app.mesh import PEER_SCOPES
@@ -47,10 +47,11 @@ async def internal_client(app_with_db, monkeypatch):
         yield client
 
 
-def _headers(signer, scopes=("events:publish",), mtls=True):
+def _headers(signer, scopes=("events:publish",), mtls=True, cert_service=None):
     headers = {SERVICE_TOKEN_HEADER: signer.token_for("surveillance", scopes)}
     if mtls:
         headers[MTLS_VERIFIED_HEADER] = "SUCCESS"
+        headers[MTLS_CLIENT_SERVICE_HEADER] = cert_service or signer.service
     return headers
 
 
@@ -156,3 +157,10 @@ async def test_unaccepted_event_type_and_bad_payload_are_rejected(peers, interna
 
 async def test_internal_routes_are_not_in_public_schema(app_with_db):
     assert not any(path.startswith("/internal") for path in app_with_db.openapi()["paths"])
+
+
+async def test_token_must_match_the_client_certificate(peers, internal_client):
+    response = await internal_client.post(
+        "/internal/v1/events", json=_alert_event(), headers=_headers(peers["parking"], cert_service="face")
+    )
+    assert response.status_code == 403

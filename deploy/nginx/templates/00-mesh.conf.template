@@ -1,0 +1,5 @@
+# Common name of the verified client certificate ("CN=parking,O=Argus").
+map $ssl_client_s_dn $argus_client_cn {
+    "~CN=(?<cn>[a-z-]+)" $cn;
+    default "";
+}

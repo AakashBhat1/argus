@@ -1,0 +1,9 @@
+proxy_ssl_certificate     /run/secrets/argus/gateway/tls.pem;
+proxy_ssl_certificate_key /run/secrets/argus/gateway/tls.key;
+proxy_ssl_trusted_certificate /run/secrets/argus/ca.pem;
+proxy_ssl_verify on;
+proxy_ssl_verify_depth 1;
+proxy_ssl_protocols TLSv1.3;
+proxy_ssl_server_name on;
+proxy_ssl_name ${PARKING_EDGE_NAME};
+proxy_ssl_session_reuse on;

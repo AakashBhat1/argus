@@ -21,7 +21,7 @@ from app.services.site_state import site_state
 from app.services.websocket_manager import ws_manager
 from argus_common.events import ArmModeChanged, EventEnvelope
 from argus_common.keys import SigningKey
-from argus_common.service_http import MTLS_VERIFIED_HEADER, SERVICE_TOKEN_HEADER
+from argus_common.service_http import MTLS_CLIENT_SERVICE_HEADER, MTLS_VERIFIED_HEADER, SERVICE_TOKEN_HEADER
 from argus_common.tokens import PeerPolicy, ServiceTokenSigner, ServiceTokenVerifier, UserTokenIssuer
 from support.identity import AUDIENCE, ISSUER, User, token_for
 
@@ -132,6 +132,7 @@ async def test_arm_mode_event_updates_site_state(app_with_db, surveillance_signe
     headers = {
         SERVICE_TOKEN_HEADER: surveillance_signer.token_for("parking", ["events:publish"]),
         MTLS_VERIFIED_HEADER: "SUCCESS",
+        MTLS_CLIENT_SERVICE_HEADER: "surveillance",
     }
     async with AsyncClient(transport=ASGITransport(app=app_with_db), base_url="http://internal") as client:
         response = await client.post("/internal/v1/events", json=envelope, headers=headers)

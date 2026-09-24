@@ -25,6 +25,8 @@ from argus_common.tokens import (
 
 SERVICE_TOKEN_HEADER = "X-Argus-Service-Token"
 MTLS_VERIFIED_HEADER = "X-Argus-Client-Verified"
+# Common name of the verified client certificate, set by the TLS proxy.
+MTLS_CLIENT_SERVICE_HEADER = "X-Argus-Client-Service"
 
 
 class ServiceAuth:
@@ -51,11 +53,19 @@ class ServiceAuth:
             if not token:
                 raise HTTPException(status.HTTP_401_UNAUTHORIZED, "service token required")
             try:
-                return self._verifier_provider().verify(token, scopes)
+                principal = self._verifier_provider().verify(token, scopes)
             except ScopeError as exc:
                 raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
             except TokenError as exc:
                 raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid service token") from exc
+            # Bind the token to the TLS identity: a token minted by one
+            # service cannot be replayed over another service's connection.
+            cert_service = request.headers.get(MTLS_CLIENT_SERVICE_HEADER)
+            if self._require_mtls_header() and cert_service != principal.service:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "service token does not match client certificate"
+                )
+            return principal
 
         return dependency
 

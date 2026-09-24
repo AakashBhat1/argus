@@ -70,6 +70,16 @@ jobs:
         working-directory: packages/argus_common
         run: python -m pytest -q
 
+  deploy-config:
+    name: deployment config (compose, PKI, nginx)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Lint deployment scripts
+        run: shellcheck deploy/pki.sh deploy/check.sh scripts/generate-secrets.sh scripts/setup-tls.sh
+      - name: Render compose files and nginx -t every edge with a throwaway PKI
+        run: deploy/check.sh
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

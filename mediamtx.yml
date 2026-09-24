@@ -1,32 +1,43 @@
+# MediaMTX — RTSP ingest and WebRTC playback.
+#
+# Passwords below are placeholders overridden by environment variables in
+# the compose files (MTX_AUTHINTERNALUSERS_<n>_PASS); the stack refuses to
+# start without them.
+
 api: yes
 apiAddress: :9997
+metrics: no
 
+rtspAddress: :8554
 webrtc: yes
 webrtcAddress: :8889
+# Only what the dashboard needs.
+rtmp: no
+hls: no
+srt: no
 
-# API credentials used by backend stream registration calls.
-# Passwords here are placeholders — override them at deploy time with
-# MediaMTX env vars (set in docker-compose):
-#   MTX_AUTHINTERNALUSERS_0_PASS  → mtx_api password
-#   MTX_AUTHINTERNALUSERS_1_PASS  → mtx_publisher password
 authInternalUsers:
+  # 0: backend stream registration (control API).
   - user: mtx_api
-    pass: mtx_api_change_me
+    pass: replaced-by-env
     permissions:
       - action: api
-      - action: metrics
-  # Publishing requires credentials so nobody on the internet can push a
-  # fake stream over a live camera path. The relay script authenticates as
-  # this user (see scripts/relay-cam1.ps1).
+  # 1: camera relays publishing into MediaMTX (see scripts/relay-cam1.ps1).
   - user: mtx_publisher
-    pass: mtx_publish_change_me
+    pass: replaced-by-env
     permissions:
       - action: publish
-  # Anonymous access is read-only (browser WebRTC playback). Restrict or
-  # token-gate reads at deploy time — see the AWS deployment checklist.
+  # 2: analytics reading the ingested path (single ingest).
+  - user: mtx_reader
+    pass: replaced-by-env
+    permissions:
+      - action: read
+  # Browser WebRTC playback. The public gateway only exposes WHEP under
+  # /stream/, behind the dashboard; restrict further per deployment.
   - user: any
     permissions:
       - action: read
+        path: ""
 
 paths:
   all_others:
