@@ -18,8 +18,8 @@ on Phase 4. Phase 7 is last.
 
 | # | Finding | Consequence |
 |---|---|---|
-| F1 | `distance_estimator` at HEAD (7717b54) is no longer the MiDaS Python prototype. It is a Go + ONNX app using Depth Anything V2 Small, metric, **trained for indoor scenes with a 20 m ceiling**. The MiDaS code survives at commit 18d12ac. | Phase 5 ports the *ideas* from 18d12ac (bbox median, percentile trim). The owner's decision (MiDaS → OpenVINO) stands and suits outdoor gates better; see Q1. |
-| F2 | The prototype's calibration is wrong for MiDaS. It uses `distance = scale / measured` with one scale. MiDaS predicts inverse depth only up to an unknown **scale and shift**, per image. | Step 5.5 fits `1/z = a·m + b` on each inferred frame from ground-plane references. No manual depth calibration is needed. |
+| F1 | `distance_estimator` at HEAD (7717b54) is no longer the MiDaS Python prototype. It is a Go + ONNX app using Depth Anything V2 Small, metric, **trained for indoor scenes with a 20 m ceiling**. The MiDaS code survives at commit 18d12ac. | Phase 5 ports the *ideas* from 18d12ac (bbox median, percentile trim). MiDaS → OpenVINO stays the default for outdoor gates, and Depth Anything becomes a per-camera switch for closed areas (decision D1). |
+| F2 | The prototype's calibration is wrong for MiDaS. It uses `distance = scale / measured` with one scale. MiDaS predicts inverse depth only up to an unknown **scale and shift**, per image. | Step 5.5 fits `1/z = a·m + b` on each MiDaS frame from ground-plane references. No manual depth calibration is needed. |
 | F3 | Both sibling repos already have no committed `__pycache__` or `egg-info` (`git ls-files` finds none). | Phase 7's sibling cleanup shrinks to a README pointer plus a `.gitignore` check. |
 | F4 | `publish_theft_suspected` (parking `app/services/events.py`) is defined and its handler exists in surveillance, but **nothing calls it**. | The theft check is new work (step 6.12), not wiring. |
 | F5 | `gate_exit` currently only sets the event direction. It does not close a session; sessions close by manual release, ParkBot or `vision_checkout` from occupancy. | Step 6.11 must handle exit explicitly. |
@@ -29,17 +29,20 @@ on Phase 4. Phase 7 is last.
 | F9 | Zones were not tenant-scoped. | Fixed in PR #4: `roi_zones` table, tenant-filtered API and runtime. |
 | F10 | The repo's `LICENSE` file is effectively empty (5 bytes of whitespace), and there is no `NOTICE`. | Step 7.4. Decide the licence before distributing anything: YOLO weights are AGPL-3.0. |
 
-## 0.1 Questions only the owner can answer
+## 0.1 Owner decisions (2026-11-08)
 
-Defaults are given, so work is not blocked, except where marked.
+Argus is an early-stage development project and is not being sold.
 
-| # | Question | Default |
+| # | Decision | Effect on the plan |
 |---|---|---|
-| Q1 | Keep MiDaS, or use Depth Anything V2? MiDaS is MIT and relative (we fit scale per frame). Depth Anything V2 Small metric is indoor-only, so it is the wrong fit for outdoor gates. | MiDaS small |
-| Q2 | **Blocker for 6.9 and the watchlist part of 6.10:** written legal advice on matching passers-by against a watchlist. Everyone in view is biometrically processed for a moment, including people who never consented. | Build it, ship with `FACE_WATCHLIST_ENABLED=false` |
-| Q3 | Does a gate fall back to plate-only when the face step cannot run (dark, no face visible)? | No: outcome is `verify` (a guard decides) |
-| Q4 | Commercial use of the system? InsightFace's pretrained weights are non-commercial; a licensed or self-trained embedder is then required before go-live. | Non-commercial; startup needs an explicit acknowledgement |
-| Q5 | Licence for Argus itself (F10). | Unlicensed, private, until decided |
+| D1 | MiDaS is the default depth model. A camera in a closed area can switch to Depth Anything V2. | Per-camera `depth_backend` (5.5), a dropdown (5.6), and a comparison tool, so the choice per camera rests on measurements. |
+| D2 | Watchlist matching is **on** by default and can be switched off. | `FACE_WATCHLIST_ENABLED=true`, with a global off switch (6.9). "Possible match — verify, never automatic action" still holds. |
+| D3 | Keep face at the gate; if it cannot run, a guard decides. FASTag may be added later, and the face step must be replaceable. | A pluggable `GateSecondFactor` (6.11). Private buildings use face; a FASTag reader can be added for public lots without touching the decision logic. |
+| D4 | Non-commercial for now. | InsightFace weights are acceptable. `FACE_ACK_NONCOMMERCIAL_WEIGHTS=true` goes in the development settings; the check stays so it cannot be forgotten if the project is ever sold. |
+
+**Still open.** Q5: the licence for Argus (`LICENSE` is blank and the repository is public). Nothing is blocked until it is distributed.
+
+**Limit on D2.** Not selling the project does not by itself take it outside the DPDP Act; the Act exempts purely personal or domestic use. During development, enroll only people who have agreed to it (`consenting_test_subject`, 6.3), and take legal advice before pointing a watchlist at the general public.
 
 ---
 
@@ -59,6 +62,7 @@ Defaults are given, so work is not blocked, except where marked.
 gate_line_image_points: list[list[float]] = field(default_factory=list)  # 2 normalized [u, v]
 gate_inside_sign: int = 1          # +1 or -1: which side of A→B is "inside"
 gate_zone_id: Optional[int] = None # the entrance zone whose schedule arms this gate
+depth_backend: str = "off"         # "off" | "midas_small" | "depth_anything_indoor" (5.5)
 ```
 
 `from_dict` validates: exactly 0 or 2 points, each in [0, 1], `gate_inside_sign` in {-1, 1}.
@@ -159,19 +163,43 @@ With the thresholds of 25, 50 and 75, either signal alone reaches at most "suspi
 
 ### 5.5 Offline MiDaS (off by default, only when the foot is hidden)
 
-**Files.** New `scripts/dev/convert_midas_openvino.py`, `packages/argus_vision/argus_vision/depth.py`, `packages/argus_vision/argus_vision/models.lock.json`. Settings go in `argus_vision/settings.py`: `DEPTH_ENABLED=false`, `DEPTH_MODEL_PATH="models/midas_small/model.xml"`, `DEPTH_MAX_FPS=2.0`.
+**Files.** New `scripts/dev/convert_midas_openvino.py`, `packages/argus_vision/argus_vision/depth.py`, `packages/argus_vision/argus_vision/models.lock.json`. Settings go in `argus_vision/settings.py`: `DEPTH_ENABLED=false` (master switch), `DEPTH_MODELS_DIR="models/depth"`, `DEPTH_MAX_FPS=2.0`. New `scripts/dev/compare_depth.py`.
 
 **Getting the model.** Use the published `model-small.onnx` (66,764,249 bytes) from the `isl-org/MiDaS` `v2_1` release; MIT licence. This avoids torch and `torch.hub` entirely. The repo's `torch.hub.load(..., trust_repo=True)` path also nests a second hub download (gen-efficientnet), which is exactly what must not run.
 
 The conversion script runs once, on a developer machine: downloads the file, compares it to a SHA-256 constant (GitHub publishes no digest for this release, so compute it on first download, record it in the script in review, and verify from a second network), runs `ov.convert_model`, `ov.save_model`, and writes `models.lock.json` with SHA-256 of the source ONNX, the `.xml` and the `.bin`.
 
-**Loading.** `DepthEstimator.__init__` verifies both hashes **before** `ov.Core().compile_model`, and raises `UnsafeModelError` on mismatch (the same pattern as `verify_embedder_weights`). No network, torch, or pickle. Input: 256×256, RGB, ImageNet normalization (confirm against the converted model's shape).
+**Per-camera switch (D1).** Each camera chooses through `CameraCalibration.depth_backend`, and depth runs only when `DEPTH_ENABLED` is also true:
+
+```python
+class DepthBackend(Protocol):
+    name: str
+    kind: Literal["relative_inverse", "metric"]
+    def infer(self, frame: np.ndarray) -> DepthMap: ...   # values plus the image region they cover
+
+BACKENDS = {"midas_small": MidasSmall, "depth_anything_indoor": DepthAnythingIndoor}
+```
+
+| | `midas_small` (default) | `depth_anything_indoor` (closed areas) |
+|---|---|---|
+| Output | Relative inverse depth; needs the per-frame fit below | Axial depth in metres; no fit needed |
+| Works | Indoors and outdoors, given a calibrated ground plane | **Indoor scenes only**, up to 20 m |
+| Needs a ground plane | Yes, for the fit | For the foot position only |
+| Input | 256×256 | 392×392 **centre crop**, no stretching |
+| Licence | MIT | Apache-2.0 (Small model) |
+| Source | `isl-org/MiDaS` v2_1 `model-small.onnx` | `kornia/depth-anything`, revision `86f40563e7e87a0839be758988aa804930409a61`, `depth-anything-v2-metric-small-indoor.onnx`, SHA-256 `50dbcac7a6d667e365a3ceffdf51cc497aa5e06b6d2c1d5824c252640fbf5bf3` (the pin `distance_estimator` already uses). A third-party conversion, not published by the model's authors. |
+
+Depth Anything specifics, carried over from `distance_estimator`: a person outside the centre crop gets `None`; readings at 19.5 m or more are rejected as saturated; sample the central 60 % of the box. Its `z` goes straight into the range formula below. One compiled model per backend, loaded on first use.
+
+**Loading.** Each backend verifies its hashes **before** `ov.Core().compile_model`, and raises `UnsafeModelError` on mismatch (the same pattern as `verify_embedder_weights`). No network, torch, or pickle.
+
+**Choosing per camera.** Whether Depth Anything really is better in a given room has to be measured. `compare_depth.py --clip room.mp4 --refs refs.json` runs both backends on the same tape-measured clip and prints median error and how many frames gave a usable reading.
 
 **Runtime.** `infer(frame) -> np.ndarray` runs through `asyncio.to_thread`, with one compiled model per process, drop-when-busy, at most `DEPTH_MAX_FPS` per camera.
 
 **Trigger.** `foot_visible(bbox, vehicles, frame_h) -> bool`: false when the box touches the bottom edge, or a vehicle box overlaps the bottom 20 % of a person's box. Depth is only requested for persons within tracking whose foot is hidden.
 
-**Maths: per-frame alignment.** MiDaS gives `m`, inverse depth up to scale and shift, per frame. Fit it from the ground plane in the same frame. Sample a 24×24 pixel grid inside the convex hull of the calibration points, excluding all detection boxes. For each sample pixel:
+**Maths: per-frame alignment (MiDaS only).** MiDaS gives `m`, inverse depth up to scale and shift, per frame. Fit it from the ground plane in the same frame. Sample a 24×24 pixel grid inside the convex hull of the calibration points, excluding all detection boxes. For each sample pixel:
 
 ```
 x = (u−cx)/fx,  y = (v−cy)/fy
@@ -182,10 +210,10 @@ z = ρ / sqrt(1 + x² + y²)       # pinhole: independent of camera orientation
 
 Solve `1/z ≈ a·m + b` by Huber-weighted least squares (IRLS, 5 iterations). Accept only if there are at least 12 samples, `z_max/z_min ≥ 1.5`, `a > 0`, and the median of `|ẑ−z|/z` is at most 0.20. Otherwise return `None` for this frame.
 
-For a person: `m_p` is the median of the central 60 % of the box width and upper 70 % of its height, after a 5–95 percentile trim. Then:
+For a person: `m_p` is the median of the central 60 % of the box width and upper 70 % of its height, after a 5–95 percentile trim. Then (Depth Anything starts from its own `ẑ`):
 
 ```
-ẑ = 1/(a·m_p + b)                  (require the denominator > 0)
+ẑ = 1/(a·m_p + b)                  (MiDaS; require the denominator > 0)
 ρ = ẑ·sqrt(1 + x_c² + y_c²)
 r = sqrt(max(ρ² − (h_c − h_t)², 0))   h_t = 1.1 m (torso centre)
 G = foot_to_ground(u_c, v_bottom)  (the visible bottom of the box)
@@ -194,26 +222,26 @@ P = C + r·(G − C)/|G − C|          C = camera ground position
 
 Requires `pose.height_m`; without it, depth stays off for that camera and the UI says so.
 
-Depth samples are shown as `distance_source: "depth_estimate"` with `distance_sigma_m = max(1.0, 0.15·r)`. They update `gate_distance_m` only: they do **not** update the speed filter, and never drive risk scoring.
+Depth samples are shown as `distance_source: "depth_estimate"` (plus `depth_backend`) with `distance_sigma_m = max(1.0, 0.15·r)`. They update `gate_distance_m` only: they do **not** update the speed filter, and never drive risk scoring.
 
-**Tests.** Hash mismatch refuses to load; a missing file with `DEPTH_ENABLED=false` is fine, and with `true` fails at startup; with synthetic `m = (1/z − b)/a` plus 3 % noise, `(a, b)` are recovered within 2 %; a shift term that the old single-scale method gets wrong by over 20 % is handled; degenerate scenes (flat range, `a ≤ 0`) give `None`; the stub OpenVINO model (extend `scripts/dev/make_stub_detector.py`) proves the plumbing with no weights. Real-model test marked `requires_model`.
+**Tests.** Hash mismatch refuses to load; a missing file with `DEPTH_ENABLED=false` is fine, and a camera selecting that backend with `true` fails clearly; the switch selects per camera and `off` runs no depth code; Depth Anything rejects saturated readings and boxes outside the crop; with synthetic `m = (1/z − b)/a` plus 3 % noise, `(a, b)` are recovered within 2 %; a shift term that the old single-scale method gets wrong by over 20 % is handled; degenerate scenes (flat range, `a ≤ 0`) give `None`; the stub OpenVINO model (extend `scripts/dev/make_stub_detector.py`) proves the plumbing with no weights. Real-model test marked `requires_model`.
 
 **Acceptance.** `grep -r "torch.hub\|trust_repo" packages services` finds nothing. With the flag off, no depth code runs. On a site clip with hidden feet, median absolute relative error is at most 25 % against a tape-measured reference (a recorded measurement, not a claim made in advance).
 
-**Risks.** CPU cost (measure; MiDaS small is roughly tens of ms on a modern CPU but shares cores with detection). MiDaS quality degrades at night and on textureless ground; the acceptance gate rejects those frames rather than reporting nonsense.
+**Risks.** CPU cost: measure it, and note that Depth Anything needed about 160 ms per frame in `distance_estimator`, so it shares cores with detection at a real cost. MiDaS quality degrades at night and on textureless ground; the acceptance gate rejects those frames rather than reporting nonsense. Depth Anything on an outdoor camera gives confident wrong numbers, so the UI warns when it is selected.
 
 ### 5.6 Calibration UI and API
 
 **Files.** New `frontend/src/components/calibration/GateLineEditor.tsx`; `ZoneEditor.tsx` (add it to the calibration tab; the component is already large, so do not grow it further); `frontend/src/lib/api.ts` (`CameraCalibration` type).
 
-**Fields.** Draw two points for the gate line; toggle the inside side (arrow on the line); select the linked entrance zone; camera height in metres.
+**Fields.** Draw two points for the gate line; toggle the inside side (arrow on the line); select the linked entrance zone; camera height in metres; **depth model** dropdown (Off, MiDaS, Depth Anything for closed areas).
 
 **API.** Unchanged: `PUT /api/v1/cameras/{id}` and `/api/v1/parking/cameras/{id}` with `calibration`. Add `GET /api/v1/cameras/{id}/calibration/check` (operator-visible, surveillance and parking) returning:
 
 ```json
 {"has_ground_plane": true, "has_gate": true, "gate_length_m": 6.2,
  "camera_pose": {"ground_x_m": 1.2, "ground_y_m": -8.4, "height_m": 4.1, "source": "pnp", "reprojection_error_px": 1.8},
- "gate_inside_hull": true, "depth_available": false, "warnings": ["gate line extends outside the calibrated area"]}
+ "gate_inside_hull": true, "depth_backend": "off", "depth_available": false, "warnings": ["gate line extends outside the calibrated area"]}
 ```
 
 **Audit.** Calibration changes are already covered by `camera.update` (`changed` lists `calibration`).
@@ -260,7 +288,7 @@ All steps above pass, depth is off by default, `docs/architecture.md` gets its g
 
 ### 6.0 Prerequisites (before writing code)
 
-Owner actions: Q2 and Q4 answered; a privacy notice drafted (a notice is required before consent under s.5 of the Act); a named grievance contact. `docs/privacy-dpdp.md` (step 7.3) is drafted alongside this phase. Not legal advice: check the Act and the notified DPDP Rules with counsel.
+Owner actions: a privacy notice drafted (a notice is required before consent under s.5 of the Act); a named grievance contact. `docs/privacy-dpdp.md` (step 7.3) is drafted alongside this phase. Not legal advice: check the Act and the notified DPDP Rules with counsel.
 
 ### 6.1 Scaffold the service
 
@@ -333,7 +361,7 @@ class FaceTemplate:    # face_templates
 
 class WatchlistEntry:  # watchlist_entries
     id, tenant_id, person_id,
-    legal_basis      # NOT NULL enum: "court_order" | "police_request" | "legitimate_use_s7"
+    legal_basis      # NOT NULL enum: "consenting_test_subject" | "court_order" | "police_request" | "legitimate_use_s7"
     legal_basis_ref  # NOT NULL: order number, request reference, or written assessment
     reason, approved_by, approved_at, review_by, expires_at (NOT NULL, ≤ 180 days)
     revoked_at, revoked_by
@@ -448,7 +476,7 @@ Service tokens carry no tenant, so `tenant_id` is asserted by the calling servic
 
 **Acceptance.** An end-to-end erasure test: enroll → match → erase → no match → no recoverable data in the live database.
 
-### 6.9 Watchlist (behind `FACE_WATCHLIST_ENABLED=false`, see Q2)
+### 6.9 Watchlist (on by default, global off switch; D2)
 
 **Files.** `services/face/app/routers/watchlist.py`, the `identify` watchlist path.
 
@@ -456,7 +484,9 @@ A watchlist entry cannot exist without `legal_basis`, `legal_basis_ref`, `approv
 
 A hit produces `decision: "possible_match"` only and emits `face.watchlist_possible_match`. The UI text is always "Possible match — verify". **It never sets `AuthDecision.threat`, never affects the gate decision by itself, never moves the risk score, and never triggers an actuator.** The sealed crop is kept for the TTL so that a human can compare.
 
-**Tests.** Flag off → path disabled (404) and no gallery loaded; expired entries are not matched; no code path from a watchlist hit reaches `GateActuator`, asserted structurally.
+`FACE_WATCHLIST_ENABLED=true` by default. Switching it off stops watchlist matching everywhere on restart, without deleting entries. Startup logs which state is active.
+
+**Tests.** Flag off → path disabled (404) and no gallery loaded, entries preserved; expired entries are not matched; no code path from a watchlist hit reaches `GateActuator`, asserted structurally.
 
 ### 6.10 Surveillance integration
 
@@ -474,9 +504,32 @@ A hit produces `decision: "possible_match"` only and emits `face.watchlist_possi
 
 **Risks.** CCTV faces are small. Expect low recognition rates on wide cameras: enable `face_enabled` only where faces are at least 80 px.
 
-### 6.11 Gate decision and actuator stub
+### 6.11 Gate decision, replaceable second factor, actuator stub
 
-**Files.** New `services/parking/app/services/gate_decision.py`, `gate_actuator.py`, `app/routers/gates.py`, migration `0005_gate_decisions`. Change `gate_ocr.py` (`_evaluate_async`), and add a `vehicle_person_links` table.
+**Files.** New `services/parking/app/services/gate_decision.py`, `gate_second_factor.py`, `gate_actuator.py`, `app/routers/gates.py`, migration `0005_gate_decisions`. Change `gate_ocr.py` (`_evaluate_async`), and add a `vehicle_person_links` table.
+
+**Replaceable second factor (D3).** The decision logic never sees "face", only a result. Which method a site uses depends on the site: face for a private building, a FASTag reader for a public lot.
+
+```python
+@dataclass(frozen=True)
+class SecondFactorResult:
+    outcome: Literal["match", "no_match", "unavailable"]
+    method: str                  # "face", later "fastag"
+    subject_id: Optional[str]
+    detail: Optional[str]        # no_face, low_quality, timeout, ...
+
+class GateSecondFactor(Protocol):
+    """Replaceable: face today; a FASTag/RFID reader can implement this later."""
+    name: str
+    binds: Literal["driver", "vehicle"]
+    async def check(self, ctx: GateContext) -> SecondFactorResult: ...
+
+FACTORS = {"face": FaceSecondFactor}   # GATE_SECOND_FACTOR=face|none
+```
+
+`GATE_SECOND_FACTOR=face` is the default. An unknown value stops startup, so `fastag` cannot be selected until a real reader implementation exists; do not add a fake one.
+
+**Adding FASTag later.** One class plus one column: `FastagSecondFactor` reads the tag's EPC from a UHF reader on the lane and compares it with a new `VehicleProfile.fastag_epc`, with `binds="vehicle"`. A FASTag proves which *tag* passed, not who is driving, and a stolen car still carries its tag, so the theft check (6.12) only runs with a `binds="driver"` factor.
 
 **Data.**
 
@@ -490,18 +543,18 @@ class GateDecision:
 
 **Decision table** (`decide(...)` is a pure function; test every row).
 
-| Plate profile | Face result | Decision |
+| Plate profile | Second factor | Decision |
 |---|---|---|
 | blacklist | any | `deny` |
-| vip / resident / staff | `match` to a linked person | `allow` |
+| vip / resident / staff | `match` to the linked person or vehicle | `allow` |
 | vip / resident / staff | `no_match` | `verify` |
-| vip / resident / staff | `no_face`, `low_quality`, `no_consent`, service down, timeout | `verify` (Q3) |
+| vip / resident / staff | `unavailable` (no face, low quality, no consent, service down, timeout) | `verify` (a guard decides, D3) |
 | normal or unknown | any | `verify` |
 | no plate read | any | `verify` |
 
-`allow` is reachable only through a positive match. A timeout (`FACE_VERIFY_TIMEOUT_S=2.0`) is never an allow. With `GATE_FACE_REQUIRED=false` (the rollout mode), an authorized plate may be `allow` on the plate alone, but the row records `face_skipped`.
+`allow` is reachable only through a positive match. A timeout (`FACE_VERIFY_TIMEOUT_S=2.0`) is never an allow. With `GATE_SECOND_FACTOR=none`, an authorized plate may be `allow` on the plate alone, and the row records `second_factor_skipped`.
 
-**Flow in `_evaluate_async`.** Plate read, then choose frames from a short ring buffer of the track, then look up linked persons, then `verify`, then `decide`, then, in one transaction: write `GateDecision`, audit `gate.decision`, publish `vehicle.gate_passed` (already has `decision` and identity fields) and `gate.decision_made`. Run the actuator **after** the commit, using its outcome to update `actuator_status`.
+**Flow in `_evaluate_async`.** Plate read, then the configured `GateSecondFactor` (for face: choose frames from a short ring buffer of the track, look up linked persons, call `verify`), then `decide`, then, in one transaction: write `GateDecision`, audit `gate.decision`, publish `vehicle.gate_passed` (already has `decision` and identity fields) and `gate.decision_made`. Run the actuator **after** the commit, using its outcome to update `actuator_status`.
 
 **Actuator.**
 
@@ -516,7 +569,7 @@ class GateActuator(Protocol):
 
 **API.** `GET /api/v1/parking/gates/decisions` (operators), `POST /api/v1/parking/gates/decisions/{id}/resolve {"resolution":"allow|deny","note":".."}` (operators; audited; a resolved `allow` calls the actuator).
 
-**Tests.** All decision-table rows; timeout gives `verify`; no actuator call for anything except `allow`; signature verifies and tampering fails; the commit is rolled back as a whole; a resolve can only happen once (atomic claim like `ParkbotProposal`).
+**Tests.** All decision-table rows; a fake factor proves `decide` needs no face code; an unknown `GATE_SECOND_FACTOR` refuses to start; timeout gives `verify`; no actuator call for anything except `allow`; signature verifies and tampering fails; the commit is rolled back as a whole; a resolve can only happen once (atomic claim like `ParkbotProposal`).
 
 **Acceptance.** Simulated clips for each row produce the right `GateDecision`. With the default actuator, no external side effect occurs.
 
@@ -526,7 +579,7 @@ class GateActuator(Protocol):
 
 **Files.** `gate_decision.py` (exit path); `services/parking/app/services/events.py` (`publish_theft_suspected` is finally called, F4).
 
-**Rule at `gate_exit`.** Authorized profile, face result `no_match` against linked persons, score below `T_possible`, and at least 3 valid frames → `verify`, publish `vehicle.theft_suspected` with reason "driver not recognized at exit — verify". `no_face` or `low_quality` → `verify`, **without** a theft event: bad images are not evidence. Repeats for the same plate are suppressed for 10 minutes. No automatic blocking.
+**Rule at `gate_exit`** (only with a `binds="driver"` factor). Authorized profile, face result `no_match` against linked persons, score below `T_possible`, and at least 3 valid frames → `verify`, publish `vehicle.theft_suspected` with reason "driver not recognized at exit — verify". `no_face` or `low_quality` → `verify`, **without** a theft event: bad images are not evidence. Repeats for the same plate are suppressed for 10 minutes. No automatic blocking.
 
 **Tests.** Each row; no event on low quality; suppression window; the event reaches surveillance and shows as an alert (the handler exists).
 
@@ -568,7 +621,7 @@ Architecture: service diagram, data ownership per database, event catalogue (fro
 Role of Data Fiduciary; data inventory (video, plates, faces, logs, audit); purpose and lawful basis per processing (s.4, s.6, s.7); notice template (s.5); consent lifecycle and withdrawal; rights (s.11–13) and how each is executed; children (s.9); retention table; breach response (s.8(6)); processors. Note that the Act has no separate "sensitive data" class, but treat biometrics as the highest tier anyway. Mark clearly that counsel must review it. **Acceptance:** every retention value matches a setting.
 
 ### 7.4 `NOTICE` and licence
-Add `NOTICE`: InsightFace (code MIT; **pretrained models non-commercial**), Ultralytics YOLO (**AGPL-3.0**: weights and any derived model; distribution or network service obligations, or an Ultralytics enterprise licence), MiDaS (MIT), deep-sort-realtime, OpenVINO (Apache-2.0), MediaMTX (MIT). Verify each licence at the pinned version when writing it. Fill in `LICENSE` once Q5 is answered, and note that AGPL may constrain the choice. **Acceptance:** no model file ships without its notice.
+Add `NOTICE`: InsightFace (code MIT; **pretrained models non-commercial**), Ultralytics YOLO (**AGPL-3.0**: weights and any derived model; distribution or network service obligations, or an Ultralytics enterprise licence), MiDaS (MIT), deep-sort-realtime, OpenVINO (Apache-2.0), MediaMTX (MIT). Verify each licence at the pinned version when writing it. Fill in `LICENSE` once the licence question (§0.1) is settled, and note that AGPL may constrain the choice. **Acceptance:** no model file ships without its notice.
 
 ### 7.5 Sibling repo cleanup
 Done in each repo, on its own branch, with its own PR. **Never through the argus repo.**
@@ -634,12 +687,12 @@ Baselines after Phase 4: argus_common 99 (2 chmod tests fail on Windows only), s
 |---|---|
 | `packages/argus_vision/argus_vision/gate_kinematics.py` | 5.2 |
 | `packages/argus_vision/argus_vision/depth.py`, `models.lock.json` | 5.5 |
-| `scripts/dev/convert_midas_openvino.py` | 5.5 |
+| `scripts/dev/convert_midas_openvino.py`, `scripts/dev/compare_depth.py` | 5.5 |
 | `frontend/src/components/calibration/GateLineEditor.tsx` | 5.6 |
 | `services/face/**` (app, routers, embedding, crypto, alembic, Dockerfile) | 6.1–6.9 |
 | `deploy/nginx/templates/40-face-internal.conf.template`, `deploy/compose/docker-compose.face.yml` | 6.1 |
 | `services/surveillance/app/services/{face_client,face_identity,face_sampler}.py`, `app/routers/people.py` | 6.10 |
-| `services/parking/app/services/{gate_decision,gate_actuator}.py`, `app/routers/gates.py`, migration `0005` | 6.11 |
+| `services/parking/app/services/{gate_decision,gate_second_factor,gate_actuator}.py`, `app/routers/gates.py`, migration `0005` | 6.11 |
 | `frontend/src/app/(dashboard)/people/page.tsx`, `components/people/*`, `components/parking/GateDecisions.tsx`, `lib/people.ts` | 6.13 |
 | `docs/architecture.md`, `docs/deployment.md`, `docs/privacy-dpdp.md`, `NOTICE` | 7.2–7.4 |
 
