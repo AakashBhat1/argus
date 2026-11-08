@@ -19,7 +19,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping, Optional, Sequence, Type
+from typing import Any, Callable, Mapping, Optional, Sequence, Type
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import JSON, Column, DateTime, Index, String, and_, delete, or_, select
@@ -139,6 +139,36 @@ def add_audit_event(
     )
     db.add(row)
     return row
+
+
+def source_ip_of(request: Any) -> Optional[str]:
+    """The client address as uvicorn resolved it (forwarded headers only from the edge)."""
+    client = getattr(request, "client", None) if request is not None else None
+    return client.host if client else None
+
+
+def make_recorder(model: Type[AuditEventMixin]) -> Callable[..., AuditEventMixin]:
+    """``record(db, request, actor, action, target_type, target_id, details)`` bound to ``model``.
+
+    ``actor`` is an AuditActor or any user object with username/tenant_id/id.
+    """
+
+    def record(
+        db: AsyncSession,
+        request: Any,
+        actor: Any,
+        action: str,
+        target_type: Optional[str] = None,
+        target_id: Any = None,
+        details: Optional[Mapping[str, Any]] = None,
+    ) -> AuditEventMixin:
+        who = actor if isinstance(actor, AuditActor) else AuditActor.user(actor)
+        return add_audit_event(
+            db, model, actor=who, action=action, target_type=target_type,
+            target_id=target_id, details=details, source_ip=source_ip_of(request),
+        )
+
+    return record
 
 
 # -- reading -------------------------------------------------------------------
