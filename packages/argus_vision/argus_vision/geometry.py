@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from itertools import combinations
+from typing import Any, Optional, Sequence
 
 import cv2
 import numpy as np
@@ -44,6 +45,11 @@ DEFAULT_CLASS_SIZES_M: dict[str, dict[str, float]] = {
 MIN_RANGE_M = 0.5
 MAX_RANGE_M = 500.0
 
+# Smallest triangle a calibration triple may form before the set counts as a
+# line: in normalized image units and in square metres.
+_MIN_IMAGE_TRIANGLE = 1e-4
+_MIN_WORLD_TRIANGLE_M2 = 0.01
+
 
 @dataclass
 class GroundPoint:
@@ -62,6 +68,36 @@ def _positive_float(value: Any, upper: float) -> Optional[float]:
     if not math.isfinite(number) or number <= 0.0 or number > upper:
         return None
     return number
+
+
+def _triangle_area(a: Sequence[float], b: Sequence[float], c: Sequence[float]) -> float:
+    return abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2.0
+
+
+def _in_general_position(points: Sequence[Sequence[float]], minimum_area: float) -> bool:
+    return all(_triangle_area(*triple) >= minimum_area for triple in combinations(points, 3))
+
+
+def homography_problem(
+    image_points: Sequence[Sequence[float]],
+    world_points: Sequence[Sequence[float]],
+) -> Optional[str]:
+    """Explain why these point pairs cannot define a ground plane, or None.
+
+    A homography needs four pairs with no three points on one line, in the
+    image and on the ground. Larger sets may contain collinear rows (a grid,
+    say), so any one well-spread subset of four is enough.
+    """
+    if len(image_points) != len(world_points) or len(image_points) < 4:
+        return "at least four matching point pairs are required"
+    for subset in combinations(range(len(image_points)), 4):
+        image = [image_points[i] for i in subset]
+        world = [world_points[i] for i in subset]
+        if _in_general_position(image, _MIN_IMAGE_TRIANGLE) and _in_general_position(
+            world, _MIN_WORLD_TRIANGLE_M2
+        ):
+            return None
+    return "calibration points are identical or lie on one line; use four spread-out corners"
 
 
 @dataclass(frozen=True)
@@ -178,6 +214,8 @@ class CameraGeometry:
         self._class_sizes.update(self.calibration.class_sizes_m)
         self._homography: Optional[np.ndarray] = None
         self._pose: Optional[CameraPose] = None
+        self._ground_side = 1.0
+        self._ground_centre: tuple[float, float] = (0.0, 0.0)
         self._recompute_intrinsics()
         self._recompute_homography()
 
@@ -206,9 +244,12 @@ class CameraGeometry:
 
     def _recompute_homography(self) -> None:
         self._homography = None
+        self._pose = None
         cal = self.calibration
         if not cal.has_homography:
             return
+        if homography_problem(cal.homography_image_points, cal.homography_world_points):
+            return  # rows saved before the API refused degenerate calibrations
         src = np.array(
             [[p[0] * self.width, p[1] * self.height] for p in cal.homography_image_points],
             dtype=np.float64,
@@ -218,9 +259,16 @@ class CameraGeometry:
             matrix, _ = cv2.findHomography(src, dst, method=0)
         except cv2.error:
             matrix = None
-        if matrix is not None and np.all(np.isfinite(matrix)):
-            self._homography = matrix
-        self._pose = self._recover_pose(src, dst) if self._homography is not None else None
+        if matrix is None or not np.all(np.isfinite(matrix)):
+            return
+        sides = matrix[2, 0] * src[:, 0] + matrix[2, 1] * src[:, 1] + matrix[2, 2]
+        if np.any(sides > 0) and np.any(sides < 0):
+            return  # the horizon cuts through the calibration quad
+        self._homography = matrix
+        self._ground_side = 1.0 if float(np.mean(sides)) > 0 else -1.0
+        centre = dst.mean(axis=0)
+        self._ground_centre = (float(centre[0]), float(centre[1]))
+        self._pose = self._recover_pose(src, dst)
 
     # -- camera pose -------------------------------------------------------
 
@@ -334,11 +382,18 @@ class CameraGeometry:
         """Map an image foot point (pixels) to metric ground coordinates."""
         if self._homography is None:
             return None
+        h = self._homography
+        # On the far side of the horizon the projection mirrors through
+        # infinity: the numbers are finite but describe no point on the ground.
+        if (h[2, 0] * float(u) + h[2, 1] * float(v) + h[2, 2]) * self._ground_side <= 0:
+            return None
         pt = np.array([[[float(u), float(v)]]], dtype=np.float64)
-        out = cv2.perspectiveTransform(pt, self._homography)[0][0]
+        out = cv2.perspectiveTransform(pt, h)[0][0]
         if not np.all(np.isfinite(out)):
             return None
-        return GroundPoint(float(out[0]), float(out[1]))
+        point = GroundPoint(float(out[0]), float(out[1]))
+        origin = GroundPoint(*self._ground_centre)
+        return point if point.distance_to(origin) <= MAX_RANGE_M else None
 
     # -- distance ----------------------------------------------------------
 

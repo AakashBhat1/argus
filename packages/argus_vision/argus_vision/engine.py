@@ -179,6 +179,23 @@ def _classwise_nms_numpy(
     return np.array(keep_indices, dtype=int)
 
 
+def usable_bgr(frame: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    """Return ``frame`` as 3-channel BGR, or None if it holds no image."""
+    if frame is None or frame.size == 0:
+        return None
+    channels = 1 if frame.ndim == 2 else frame.shape[2]
+    if channels == 3:
+        return frame
+
+    import cv2
+
+    if channels == 1:
+        return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    if channels == 4:
+        return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    return None
+
+
 class OpenVINODetector:
     """Thread-safe OpenVINO detector with a backward-compatible API."""
 
@@ -724,6 +741,9 @@ class OpenVINODetector:
         return result[self._output_layer]
 
     def detect(self, frame: np.ndarray) -> list[dict]:
+        frame = usable_bgr(frame)
+        if frame is None:
+            return []
         t_start = time.perf_counter()
 
         t_pre = time.perf_counter()
@@ -755,8 +775,11 @@ class OpenVINODetector:
     def detect_batch(self, frames: list[np.ndarray]) -> list[list[dict]]:
         if not frames:
             return []
-        if len(frames) == 1:
-            return [self.detect(frames[0])]
+        usable = [usable_bgr(frame) for frame in frames]
+        if len(frames) == 1 or any(frame is None for frame in usable):
+            # One bad frame must not cost its batch-mates their results.
+            return [[] if frame is None else self.detect(frame) for frame in usable]
+        frames = usable
 
         t_start = time.perf_counter()
         t_pre = time.perf_counter()
@@ -795,6 +818,14 @@ class OpenVINODetector:
             total_ms,
         )
         return all_detections
+
+    @property
+    def optimal_infer_requests(self) -> int:
+        """How many simultaneous requests the compiled model handles best."""
+        try:
+            return int(self._compiled_model.get_property("OPTIMAL_NUMBER_OF_INFER_REQUESTS"))
+        except (RuntimeError, TypeError, ValueError, AttributeError):
+            return 1
 
     @property
     def supports_batch(self) -> bool:

@@ -66,6 +66,8 @@ ZONE_BASE_DISARMED: dict[str, float] = {
 }
 
 EDGE_MARGIN_RATIO = 0.08
+# Faster than any vehicle on a site (216 km/h): a calibration artefact, not motion.
+MAX_PLAUSIBLE_SPEED_MPS = 60.0
 WINDOW_SEC = 30.0
 CRIME_MEMORY_SEC = 30.0
 
@@ -605,7 +607,8 @@ class RiskEngine:
         dt = t1 - t0
         if dt <= 0.2:
             return None
-        return round(math.hypot(x1 - x0, y1 - y0) / dt, 2)
+        speed = math.hypot(x1 - x0, y1 - y0) / dt
+        return round(speed, 2) if speed <= MAX_PLAUSIBLE_SPEED_MPS else None
 
     def _in_quiet_hours(self, wall: datetime) -> bool:
         s = self._settings

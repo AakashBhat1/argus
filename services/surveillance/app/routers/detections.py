@@ -19,8 +19,8 @@ async def list_detections(
     class_label: Optional[str] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
-    limit: int = Query(default=100, le=1000),
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -42,7 +42,7 @@ async def list_detections(
 @router.get("/recent/{camera_id}", response_model=list[DetectionResponse])
 async def get_recent_detections(
     camera_id: str,
-    seconds: int = 60,
+    seconds: int = Query(default=60, ge=1, le=86_400),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -64,7 +64,7 @@ async def get_recent_detections(
 async def count_detections(
     camera_id: Optional[str] = None,
     class_label: Optional[str] = None,
-    hours: int = 24,
+    hours: int = Query(default=24, ge=1, le=8760),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):

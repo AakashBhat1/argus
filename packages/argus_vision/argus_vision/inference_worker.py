@@ -37,6 +37,19 @@ from argus_vision.metrics import inference_metrics
 
 logger = logging.getLogger(__name__)
 
+# Weight of the newest batch in the recent-latency average. The lifetime
+# average barely moves after a few minutes, so it cannot steer frame skipping.
+RECENT_LATENCY_WEIGHT = 0.1
+
+
+# Below this a burst from several cameras queues behind a single request.
+MIN_AUTO_WORKERS = 2
+
+
+def inference_worker_count(configured: int, optimal_requests: int) -> int:
+    """Use the configured worker count, or size the pool from the model."""
+    return configured if configured > 0 else max(MIN_AUTO_WORKERS, optimal_requests)
+
 
 class BatchDetector(Protocol):
     def detect_batch(self, frames: list[np.ndarray]) -> list[list[dict]]:
@@ -93,6 +106,7 @@ class InferenceWorkerPool:
         self._total_batch_latency_ms = 0.0
         self._last_batch_size = 0
         self._last_batch_latency_ms = 0.0
+        self._recent_batch_latency_ms: Optional[float] = None
 
     async def start(self):
         """Start the worker pool. Call from FastAPI lifespan startup."""
@@ -276,6 +290,12 @@ class InferenceWorkerPool:
         self._last_batch_size = len(batch)
         self._last_batch_latency_ms = elapsed_ms
         self._total_batch_latency_ms += elapsed_ms
+        previous = self._recent_batch_latency_ms
+        self._recent_batch_latency_ms = (
+            elapsed_ms
+            if previous is None
+            else previous + RECENT_LATENCY_WEIGHT * (elapsed_ms - previous)
+        )
         inference_metrics.record_batch(batch_size=len(batch), latency_ms=elapsed_ms)
         inference_metrics.update_queue_depth(self.queue_depth)
         inference_metrics.update_frames_dropped(self._frames_dropped)
@@ -309,4 +329,5 @@ class InferenceWorkerPool:
             "last_batch_size": self._last_batch_size,
             "last_batch_latency_ms": round(self._last_batch_latency_ms, 2),
             "avg_batch_latency_ms": round(avg_batch_latency, 2),
+            "recent_batch_latency_ms": round(self._recent_batch_latency_ms or 0.0, 2),
         }

@@ -21,19 +21,25 @@ logger = logging.getLogger(__name__)
 # Indian state code mapping
 STATE_CODES = {
     "AN": "Andaman & Nicobar", "AP": "Andhra Pradesh", "AR": "Arunachal Pradesh",
-    "AS": "Assam", "BR": "Bihar", "CH": "Chandigarh", "CT": "Chhattisgarh",
+    "AS": "Assam", "BR": "Bihar", "CG": "Chhattisgarh", "CH": "Chandigarh", "CT": "Chhattisgarh",
     "DN": "Dadra & Nagar Haveli", "DD": "Daman & Diu", "DL": "Delhi",
     "GA": "Goa", "GJ": "Gujarat", "HR": "Haryana", "HP": "Himachal Pradesh",
     "JK": "Jammu & Kashmir", "JH": "Jharkhand", "KA": "Karnataka",
     "KL": "Kerala", "LA": "Ladakh", "LD": "Lakshadweep", "MP": "Madhya Pradesh",
     "MH": "Maharashtra", "MN": "Manipur", "ML": "Meghalaya", "MZ": "Mizoram",
-    "NL": "Nagaland", "OD": "Odisha", "PB": "Punjab", "PY": "Puducherry",
-    "RJ": "Rajasthan", "SK": "Sikkim", "TN": "Tamil Nadu", "TS": "Telangana",
-    "TR": "Tripura", "UP": "Uttar Pradesh", "UK": "Uttarakhand", "WB": "West Bengal",
+    "NL": "Nagaland", "OD": "Odisha", "OR": "Odisha", "PB": "Punjab", "PY": "Puducherry",
+    "RJ": "Rajasthan", "SK": "Sikkim", "TG": "Telangana", "TN": "Tamil Nadu", "TS": "Telangana",
+    "TR": "Tripura", "UA": "Uttarakhand", "UP": "Uttar Pradesh", "UK": "Uttarakhand",
+    "WB": "West Bengal",
 }
 
-# Standard Indian plate: XX00X0000 or XX00XX0000
-PLATE_REGEX = re.compile(r"^[A-Z]{2}\d{2}[A-Z]{1,2}\d{4}$")
+BHARAT_SERIES = "BH"
+
+# Standard Indian plate (XX00X0000, XX00XX0000) or Bharat series (00BH0000X,
+# 00BH0000XX; the series letters never include I or O).
+PLATE_REGEX = re.compile(
+    rf"^(?:[A-Z]{{2}}\d{{2}}[A-Z]{{1,2}}\d{{4}}|\d{{2}}{BHARAT_SERIES}\d{{4}}[A-HJ-NP-Z]{{1,2}})$"
+)
 
 _engine = None
 _engine_lock = asyncio.Lock() if False else None  # placeholder; engine is sync-init
@@ -55,6 +61,8 @@ def _get_engine():
 def find_state(plate_text: str) -> str:
     if not plate_text or len(plate_text) < 2:
         return "Unknown"
+    if plate_text[2:4].upper() == BHARAT_SERIES and plate_text[:2].isdigit():
+        return "Bharat series"
     return STATE_CODES.get(plate_text[:2].upper(), "Unknown")
 
 
@@ -64,8 +72,9 @@ def normalize_plate_text(text: str) -> str:
 
 
 def is_valid_plate(plate_text: str) -> bool:
-    """Validate against Indian plate regex."""
-    return bool(PLATE_REGEX.match(normalize_plate_text(plate_text)))
+    """Validate the Indian plate format, including a real state code."""
+    text = normalize_plate_text(plate_text)
+    return bool(PLATE_REGEX.match(text)) and find_state(text) != "Unknown"
 
 
 # Loose plausibility gate for plates that don't match the strict Indian

@@ -61,8 +61,8 @@ def _bucket_to_iso(value: Union[datetime, str, None]) -> Optional[str]:
 @router.get("/detections/timeline")
 async def detection_timeline(
     camera_id: Optional[str] = None,
-    hours: int = Query(default=24, le=168),
-    interval_minutes: int = Query(default=60, le=1440),
+    hours: int = Query(default=24, ge=1, le=168),
+    interval_minutes: int = Query(default=60, ge=1, le=1440),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -102,7 +102,7 @@ async def detection_timeline(
 @router.get("/detections/heatmap")
 async def detection_heatmap(
     camera_id: str,
-    hours: int = Query(default=24, le=168),
+    hours: int = Query(default=24, ge=1, le=168),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -137,7 +137,7 @@ async def detection_heatmap(
 @router.get("/detections/class-distribution")
 async def class_distribution(
     camera_id: Optional[str] = None,
-    hours: int = Query(default=24, le=168),
+    hours: int = Query(default=24, ge=1, le=168),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):

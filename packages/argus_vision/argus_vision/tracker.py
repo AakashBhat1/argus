@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -41,16 +42,51 @@ def verify_embedder_weights(path: str | Path | None = None) -> None:
         raise UnsafeEmbedderError(f"unexpected embedder weights SHA-256 {digest} at {weights}")
 
 
+_embedder_lock = threading.Lock()
+_shared_embedder: embedder_pytorch.MobileNetv2_Embedder | None = None
+
+
+def _appearance_model() -> embedder_pytorch.MobileNetv2_Embedder:
+    """Return the one appearance model every camera's tracker shares.
+
+    Inference only reads the eval-mode weights, so threads can share them.
+    Loading once also keeps per-camera startup off the slow path. Torch is
+    capped because its default thread pool spins on every core while idle,
+    taking CPU from OpenVINO: measured, YOLO ran about 30% slower uncapped.
+    """
+    global _shared_embedder
+    with _embedder_lock:
+        if _shared_embedder is None:
+            verify_embedder_weights()
+            torch.set_num_threads(max(1, get_settings().TORCH_NUM_THREADS))
+            _shared_embedder = embedder_pytorch.MobileNetv2_Embedder()
+        return _shared_embedder
+
+
 def _build_deepsort() -> DeepSort:
-    verify_embedder_weights()
     settings = get_settings()
-    return DeepSort(
+    tracker = DeepSort(
         max_age=settings.TRACKER_MAX_AGE,
         n_init=settings.TRACKER_N_INIT,
         max_iou_distance=0.7,
         max_cosine_distance=0.3,
         nn_budget=100,
+        embedder=None,
     )
+    tracker.embedder = _appearance_model()
+    return tracker
+
+
+def _clip_to_frame(ltrb: np.ndarray, frame_shape: tuple[int, ...]) -> tuple[float, float, float, float] | None:
+    """Return the box clipped to the frame, or None if nothing of it remains."""
+    height, width = frame_shape[:2]
+    left = max(0.0, float(ltrb[0]))
+    top = max(0.0, float(ltrb[1]))
+    right = min(float(width), float(ltrb[2]))
+    bottom = min(float(height), float(ltrb[3]))
+    if right - left < 1.0 or bottom - top < 1.0:
+        return None
+    return left, top, right, bottom
 
 
 class MultiObjectTracker:
@@ -59,6 +95,12 @@ class MultiObjectTracker:
 
     Uses Kalman filtering for state prediction and the Hungarian algorithm
     for data association between detections and existing tracks.
+
+    Only tracks matched to a detection on the current frame are reported. A
+    coasting track is a Kalman guess: it has no confidence, can drift off the
+    frame, and can even invert. It stays alive inside DeepSORT so its identity
+    survives a short occlusion, and the ROI and risk stages bridge the gap
+    with their own grace periods.
     """
 
     def __init__(self):
@@ -107,8 +149,12 @@ class MultiObjectTracker:
                     float(ltrb[3]),
                 ),
             )
-            if not track.is_confirmed():
+            if not track.is_confirmed() or track.time_since_update > 0:
                 continue
+            box = _clip_to_frame(ltrb, frame.shape)
+            if box is None:
+                continue
+            left, top, right, bottom = box
 
             det_class = track.det_class if hasattr(track, "det_class") else "unknown"
             det_conf = track.det_conf if hasattr(track, "det_conf") else 0.0
@@ -118,10 +164,10 @@ class MultiObjectTracker:
                 "object_id": int(track_id),
                 "class_label": det_class if det_class else "unknown",
                 "confidence": float(det_conf) if det_conf else 0.0,
-                "bbox_x": float(ltrb[0]),
-                "bbox_y": float(ltrb[1]),
-                "bbox_w": float(ltrb[2] - ltrb[0]),
-                "bbox_h": float(ltrb[3] - ltrb[1]),
+                "bbox_x": left,
+                "bbox_y": top,
+                "bbox_w": right - left,
+                "bbox_h": bottom - top,
                 "frame_number": self._frame_count,
                 "track_start_anchor_x": origin_x,
                 "track_start_anchor_y": origin_y,

@@ -25,6 +25,9 @@ class _OneFrameCapture:
     def read(self):
         return True, self._frame.copy()
 
+    def get(self, _prop) -> float:
+        return 30.0
+
     def release(self) -> None:
         self._open = False
 

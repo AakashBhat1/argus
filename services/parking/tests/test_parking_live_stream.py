@@ -41,6 +41,9 @@ class _OneFrameCapture:
     def set(self, *_args) -> bool:
         return True
 
+    def get(self, _prop) -> float:
+        return 30.0
+
 
 def _frame() -> np.ndarray:
     return synthetic_media.parking_lot_frame({0, 1}, seed=3)

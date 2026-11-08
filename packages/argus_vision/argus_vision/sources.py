@@ -10,8 +10,9 @@ from __future__ import annotations
 import base64
 import logging
 import platform
+import threading
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 from urllib.parse import quote
 
 import cv2
@@ -74,7 +75,50 @@ def resolve_stream_source(stream_url: str) -> Source:
     return value
 
 
-def open_capture(stream_url: Union[str, int]) -> cv2.VideoCapture:
+class GuardedCapture:
+    """A video capture that is safe to use from more than one thread.
+
+    OpenCV drops the GIL inside ``read`` and ``release``, and its FFmpeg
+    backend does not tolerate a release during a read: the decoder's threads
+    are torn down underneath it and the whole process dies with heap
+    corruption. Every native call here takes the same lock, and calls made
+    after ``release`` fail cleanly. ``release`` can block for as long as a
+    read in progress, so async code must call it from a worker thread.
+    """
+
+    def __init__(self, capture: cv2.VideoCapture):
+        self._capture = capture
+        self._lock = threading.Lock()
+        self._released = False
+
+    def isOpened(self) -> bool:  # noqa: N802  (mirrors cv2.VideoCapture)
+        with self._lock:
+            return not self._released and self._capture.isOpened()
+
+    def read(self) -> tuple[bool, Optional[np.ndarray]]:
+        with self._lock:
+            return (False, None) if self._released else self._capture.read()
+
+    def grab(self) -> bool:
+        with self._lock:
+            return False if self._released else self._capture.grab()
+
+    def get(self, prop: int) -> float:
+        with self._lock:
+            return 0.0 if self._released else self._capture.get(prop)
+
+    def set(self, prop: int, value: Any) -> bool:
+        with self._lock:
+            return False if self._released else self._capture.set(prop, value)
+
+    def release(self) -> None:
+        with self._lock:
+            if not self._released:
+                self._released = True
+                self._capture.release()
+
+
+def open_capture(stream_url: Union[str, int]) -> GuardedCapture:
     """Open a capture for URLs, ``video://`` files or local device indexes.
 
     Network sources are re-checked against the SSRF policy right before the
@@ -87,15 +131,15 @@ def open_capture(stream_url: Union[str, int]) -> cv2.VideoCapture:
             recheck_stream_target(source, policy_from_settings(get_settings()))
         except StreamTargetError as exc:
             logger.warning("Refusing stream source %s: %s", redact_url(source), exc)
-            return cv2.VideoCapture()
+            return GuardedCapture(cv2.VideoCapture())
     if isinstance(source, int) and platform.system().lower() == "windows":
-        return cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        return GuardedCapture(cv2.VideoCapture(source, cv2.CAP_DSHOW))
     cap = cv2.VideoCapture(source)
     if isinstance(source, str) and (source.startswith("http") or source.startswith("rtsp")):
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
         cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
         cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 10000)
-    return cap
+    return GuardedCapture(cap)
 
 
 def encode_frame_to_base64(frame: np.ndarray, quality: int = 70) -> str:

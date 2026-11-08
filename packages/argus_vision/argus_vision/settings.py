@@ -79,12 +79,18 @@ class VisionSettings(BaseSettings):
 
     # -- Stream processing ----------------------------------------------------
     MAX_STREAMS: int = 20
-    FRAME_SKIP: int = 6
+    FRAME_SKIP: int = 2
+    # Adaptive skipping never leaves a source with fewer analysed frames per
+    # second than this: DeepSORT needs consecutive sightings to confirm a track.
+    MIN_ANALYSIS_FPS: float = 4.0
     BATCH_ENABLED: bool = True
     BATCH_MAX_SIZE: int = 8
     BATCH_TIMEOUT_MS: int = 20
     # OpenVINO releases the GIL, so threads give real parallelism.
-    INFERENCE_WORKERS: int = 2
+    # 0 sizes the pool from the compiled model (see inference_worker_count).
+    INFERENCE_WORKERS: int = 0
+    # CPU threads for torch (the tracker's appearance model, crime classifier).
+    TORCH_NUM_THREADS: int = 2
     INFERENCE_QUEUE_MAX: int = 64
     ADAPTIVE_FPS_ENABLED: bool = True
     TARGET_LATENCY_MS: int = 100
