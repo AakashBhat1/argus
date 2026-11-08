@@ -14,8 +14,15 @@ from typing import Any, Optional
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import timedelta
+
+from sqlalchemy import update
+
 from app.config import get_settings
-from app.services import parking_service
+from app.models import ParkbotProposal, generate_uuid
+from app.services import audit, parking_service
+from app.utils import utc_now
+from argus_common.audit import AuditActor
 from app.services.parking_commands import ALLOWED_ACTIONS, validate_command
 
 logger = logging.getLogger(__name__)
@@ -192,9 +199,16 @@ class ParkingAssistant:
         tenant_id: str,
         message: str,
         *,
-        actor_user_id: str,
+        actor: Any,
+        request: Any = None,
     ) -> dict[str, Any]:
-        """Admin path: answer and/or validate+execute structured action."""
+        """Admin path: answer, and turn a valid action into a *proposal*.
+
+        Nothing changes here. The model's output (or a JSON message) is only
+        validated against the whitelist and stored as a proposal that the
+        same admin must confirm (``confirm``) before it runs. Tenant and actor
+        always come from the caller, never from the model.
+        """
         ctx = await self._build_context(db, tenant_id)
         system = COMMAND_SYSTEM.format(
             actions=", ".join(sorted(ALLOWED_ACTIONS)),
@@ -231,12 +245,16 @@ class ParkingAssistant:
                 err,
                 action,
             )
+            audit.record(
+                db, request, actor, "parkbot.command.rejected", "parkbot", None,
+                {"message": message, "extracted": action, "validation": error_code},
+            )
             await parking_service.log_activity(
                 db,
                 tenant_id,
                 "command_rejected",
                 f"ParkBot command rejected action={action_name} reason={error_code}",
-                actor_user_id=actor_user_id,
+                actor_user_id=_actor_id(actor),
             )
             return {
                 "role": "assistant",
@@ -247,21 +265,77 @@ class ParkingAssistant:
                 "error": err,
             }
 
-        result = await self._execute(db, tenant_id, normalized, actor_user_id=actor_user_id)
-        await parking_service.log_activity(
-            db,
-            tenant_id,
-            "command",
-            f"ParkBot executed {normalized['action']}: {result}",
-            plate_text=normalized.get("plate_text"),
-            space_id=normalized.get("space_id"),
-            actor_user_id=actor_user_id,
+        ttl = timedelta(seconds=self._settings().PARKBOT_CONFIRM_TTL_SECONDS)
+        proposal = ParkbotProposal(
+            id=generate_uuid(),
+            tenant_id=str(tenant_id),
+            actor_id=_actor_id(actor),
+            command=normalized,
+            expires_at=utc_now() + ttl,
+        )
+        db.add(proposal)
+        audit.record(
+            db, request, actor, "parkbot.command.proposed", "parkbot_proposal", proposal.id,
+            {"message": message, "extracted": action, "validation": "ok", "command": normalized},
         )
         return {
             "role": "assistant",
             "mode": "command",
             "content": reply,
             "command": normalized,
+            "executed": False,
+            "requires_confirmation": True,
+            "proposal_id": proposal.id,
+            "expires_at": proposal.expires_at,
+        }
+
+    async def confirm(
+        self,
+        db: AsyncSession,
+        tenant_id: str,
+        proposal_id: str,
+        *,
+        actor: Any,
+        request: Any = None,
+    ) -> dict[str, Any]:
+        """Run a pending proposal once, for the admin who requested it."""
+        now = utc_now()
+        claimed = await db.execute(
+            update(ParkbotProposal)
+            .where(
+                ParkbotProposal.id == proposal_id,
+                ParkbotProposal.tenant_id == str(tenant_id),
+                ParkbotProposal.actor_id == _actor_id(actor),
+                ParkbotProposal.consumed_at.is_(None),
+                ParkbotProposal.expires_at > now,
+            )
+            .values(consumed_at=now)
+        )
+        if claimed.rowcount != 1:
+            audit.record(db, request, actor, "parkbot.command.confirm_refused", "parkbot_proposal", proposal_id)
+            raise ProposalError("No pending proposal with this id (expired, used, or not yours)")
+
+        proposal = await db.get(ParkbotProposal, proposal_id)
+        command = dict(proposal.command)
+        result = await self._execute(db, tenant_id, command, actor=actor)
+        audit.record(
+            db, request, actor, "parkbot.command.executed", "parkbot_proposal", proposal_id,
+            {"command": command, "result": result},
+        )
+        await parking_service.log_activity(
+            db,
+            tenant_id,
+            "command",
+            f"ParkBot executed {command['action']}: {result}",
+            plate_text=command.get("plate_text"),
+            space_id=command.get("space_id"),
+            actor_user_id=_actor_id(actor),
+        )
+        return {
+            "role": "assistant",
+            "mode": "command",
+            "content": "Done." if result.get("ok") else f"Not done: {result.get('error')}",
+            "command": command,
             "executed": True,
             "result": result,
         }
@@ -272,7 +346,7 @@ class ParkingAssistant:
         tenant_id: str,
         cmd: dict[str, Any],
         *,
-        actor_user_id: str,
+        actor: Any,
     ) -> dict[str, Any]:
         action = cmd["action"]
         if action == "release_space":
@@ -280,19 +354,29 @@ class ParkingAssistant:
                 db,
                 tenant_id,
                 cmd["space_id"],
-                actor_user_id=actor_user_id,
+                actor_user_id=_actor_id(actor),
             )
             if out is None:
                 return {"ok": False, "error": "Space not found or already free"}
             return {"ok": True, **out}
 
         if action == "assign_space":
-            out = await parking_service.assign_space(db, tenant_id, cmd["plate_text"])
+            out = await parking_service.assign_space(
+                db, tenant_id, cmd["plate_text"], actor=AuditActor.user(actor)
+            )
             if out is None:
                 return {"ok": False, "error": "No free spaces"}
             return {"ok": True, **{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in out.items()}}
 
         return {"ok": False, "error": f"Unhandled action {action}"}
+
+
+class ProposalError(Exception):
+    """A confirmation that does not match a live, unused proposal of the caller."""
+
+
+def _actor_id(actor: Any) -> str:
+    return str(getattr(actor, "id", None) or actor.username)[:64]
 
 
 parking_assistant = ParkingAssistant()

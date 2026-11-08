@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,7 +23,7 @@ from app.schemas import (
     ParkingStatsResponse,
     ReleaseSpaceResponse,
 )
-from app.services import parking_service
+from app.services import audit, parking_service
 from app.services.auth import Principal as User, get_current_active_user, require_admin
 from app.services.parking_seeder import seed_parking_spaces_for_tenant
 from app.services.parking_occupancy import OccupancyDetector, SlotGeometry
@@ -100,6 +100,7 @@ async def list_parking_spaces(
 @router.post("/spaces/{space_id}/release", response_model=ReleaseSpaceResponse)
 async def release_parking_space(
     space_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -111,6 +112,10 @@ async def release_parking_space(
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Space not found")
+    audit.record(
+        db, request, current_user, "parking.space.release", "parking_space", space_id,
+        {"plate": result.get("plate_text"), "amount_paid": result.get("amount_paid")},
+    )
     await ws_manager.broadcast_to_channel(
         current_user.tenant_id,
         "parking",
@@ -176,6 +181,7 @@ async def list_camera_slots(
 async def replace_camera_slots(
     camera_id: str,
     payload: ParkingSlotsReplaceRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -246,10 +252,15 @@ async def replace_camera_slots(
         row.display_order = slot.display_order
         row.detection_source = 'manual'
 
+    removed = sorted(row.space_id for row in existing if row.space_id not in incoming_codes)
     for row in existing:
         if row.space_id not in incoming_codes:
             await db.delete(row)
 
+    audit.record(
+        db, request, current_user, "parking.slots.replace", "camera", camera_id,
+        {"slots": sorted(incoming_codes), "removed": removed},
+    )
     await db.flush()
     rows = (
         await db.execute(

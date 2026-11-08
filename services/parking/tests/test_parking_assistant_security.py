@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -105,12 +105,9 @@ async def test_rejected_command_persists_only_bounded_structured_metadata(monkey
     monkeypatch.setattr(assistant, "_ollama_chat", AsyncMock(return_value=raw_reply))
     monkeypatch.setattr(parking_service, "log_activity", log_activity)
 
-    result = await assistant.chat_command(
-        object(),
-        "tenant-a",
-        "please help",
-        actor_user_id="admin-a",
-    )
+    db = MagicMock()  # the rejection is audited via db.add, never committed here
+    admin = SimpleNamespace(username="admin-a", id="admin-a", tenant_id="tenant-a", role="admin")
+    result = await assistant.chat_command(db, "tenant-a", "please help", actor=admin)
 
     assert result["executed"] is False
     persisted_description = log_activity.await_args.args[3]
@@ -119,6 +116,8 @@ async def test_rejected_command_persists_only_bounded_structured_metadata(monkey
     )
     assert injection not in persisted_description
     assert "payload" not in persisted_description.lower()
+    audited = db.add.call_args.args[0]
+    assert audited.action == "parkbot.command.rejected" and audited.details["validation"] == "action_not_allowed"
 
 
 @pytest.mark.asyncio

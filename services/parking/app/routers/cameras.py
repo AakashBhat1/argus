@@ -17,6 +17,7 @@ from app.schemas import CameraCreate, CameraResponse, CameraUpdate
 from app.services.auth import Principal, get_current_active_user, require_admin
 from app.services.parking_occupancy_service import invalidate_slots
 from app.services.stream_manager import stream_manager
+from app.services import audit
 from argus_vision.sources import SourceError, open_capture, validate_camera_source
 from argus_common.net import MaskedCredentialsError, restore_masked_credentials
 from argus_common.web_auth import CsrfError, check_playback_request
@@ -89,6 +90,7 @@ async def list_cameras(
 @router.post("", response_model=CameraResponse, status_code=status.HTTP_201_CREATED)
 async def create_camera(
     data: CameraCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(require_admin),
 ):
@@ -97,6 +99,11 @@ async def create_camera(
     camera = Camera(**payload, tenant_id=current_user.tenant_id)
     db.add(camera)
     await db.flush()
+    # stream_url is redacted by the audit sanitiser (credentials never stored).
+    audit.record(
+        db, request, current_user, "camera.create", "camera", camera.id,
+        {"name": camera.name, "role": payload.get("role"), "stream_url": data.stream_url},
+    )
     await db.refresh(camera)
     return camera
 
@@ -114,6 +121,7 @@ async def get_camera(
 async def update_camera(
     camera_id: str,
     data: CameraUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(require_admin),
 ):
@@ -129,6 +137,10 @@ async def update_camera(
         _validate_source(changes["stream_url"])
     for key, value in changes.items():
         setattr(camera, key, value)
+    audit.record(
+        db, request, current_user, "camera.update", "camera", camera_id,
+        {"name": camera.name, "changed": sorted(changes), "stream_url": changes.get("stream_url")},
+    )
     await db.flush()
     await db.refresh(camera)
     if "role" in changes or "gate_roi" in changes:
@@ -139,6 +151,7 @@ async def update_camera(
 @router.delete("/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_camera(
     camera_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: Principal = Depends(require_admin),
 ):
@@ -155,6 +168,7 @@ async def delete_camera(
     )
     await db.execute(delete(Alert).where(Alert.camera_id == camera_id))
     invalidate_slots(camera_id, current_user.tenant_id)
+    audit.record(db, request, current_user, "camera.delete", "camera", camera_id, {"name": camera.name})
     await db.delete(camera)
 
 

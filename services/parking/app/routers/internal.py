@@ -12,7 +12,9 @@ from app.mesh import mesh
 from app.models import InboxEvent
 from app.services.site_state import site_state
 from app.services.websocket_manager import ws_manager
+from argus_common.audit import AuditActor
 from argus_common.events import ArmModeChanged, EventEnvelope, EventError, record_inbox
+from app.services import audit
 from argus_common.tokens import ServicePrincipal
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,11 @@ async def receive_event(
             return JSONResponse({"status": "duplicate"}, status_code=status.HTTP_200_OK)
         data: ArmModeChanged = envelope.validated_data()  # type: ignore[assignment]
         site_state.set_arm_mode(envelope.tenant_id, data.mode)
+        audit.record(
+            session, request, AuditActor.service(principal.service, envelope.tenant_id),
+            "internal.event.handled", "event", envelope.id,
+            {"event_type": envelope.type, "mode": data.mode},
+        )
         await session.commit()
 
     await ws_manager.broadcast_to_channel(
