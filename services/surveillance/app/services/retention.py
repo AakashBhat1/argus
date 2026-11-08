@@ -4,7 +4,8 @@ from datetime import timedelta
 from sqlalchemy import delete
 from app import database
 from app.config import get_settings
-from app.models import AnalyticsSnapshot, Alert, AlertStatus, Detection, RoiEvent
+from app.models import AnalyticsSnapshot, Alert, AlertStatus, AuditEvent, Detection, RoiEvent
+from argus_common.audit import purge_audit_events
 from app.utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -55,17 +56,22 @@ async def retention_worker():
                     analytics_result = await session.execute(del_analytics)
                     analytics_result_count = int(analytics_result.rowcount or 0)
 
+                audit_count = await purge_audit_events(
+                    session, AuditEvent, retention_days=settings.AUDIT_RETENTION_DAYS
+                )
+
                 await session.commit()
 
                 logger.info(
                     (
                         "Data cleanup: deleted detections=%s alerts=%s roi_events=%s "
-                        "analytics_snapshots=%s cutoff=%s"
+                        "analytics_snapshots=%s audit_events=%s cutoff=%s"
                     ),
                     int(det_result.rowcount or 0),
                     int(alert_result.rowcount or 0),
                     roi_result_count,
                     analytics_result_count,
+                    audit_count,
                     cutoff_date.isoformat(),
                 )
         except asyncio.CancelledError:

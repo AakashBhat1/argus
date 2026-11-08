@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Response
+from fastapi import Request, Response
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +26,9 @@ from app.config import get_settings
 from app.models import AuthSession, User
 from app.services.auth import create_access_token, session_cookie_names
 from app.utils import utc_now
+from argus_common.audit import AuditActor
 from argus_common.web_auth import REFRESH_COOKIE_PATH
+from app.services import audit
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,17 @@ async def start_session(db: AsyncSession, user: User, user_agent: Optional[str] 
     return IssuedSession(user, access_token, access_expires_at, refresh_token, row.expires_at)
 
 
+async def _audit_session(db: AsyncSession, request: Optional[Request], row: AuthSession, action: str) -> None:
+    """Stage an audit row; _revoke_family's commit persists it with the revocation."""
+    user = await db.get(User, row.user_id)
+    actor = (
+        AuditActor.user(user)
+        if user is not None
+        else AuditActor(name=f"user:{row.user_id}", tenant_id="1", id=row.user_id)
+    )
+    audit.record(db, request, actor, action, target_type="session", target_id=row.family_id)
+
+
 async def _revoke_family(db: AsyncSession, family_id: str) -> None:
     await db.execute(
         update(AuthSession)
@@ -94,7 +107,12 @@ async def _revoke_family(db: AsyncSession, family_id: str) -> None:
     await db.commit()
 
 
-async def rotate_session(db: AsyncSession, refresh_token: str, user_agent: Optional[str] = None) -> IssuedSession:
+async def rotate_session(
+    db: AsyncSession,
+    refresh_token: str,
+    user_agent: Optional[str] = None,
+    request: Optional[Request] = None,
+) -> IssuedSession:
     row = (
         await db.execute(select(AuthSession).where(AuthSession.token_hash == _hash(refresh_token)))
     ).scalar_one_or_none()
@@ -106,6 +124,7 @@ async def rotate_session(db: AsyncSession, refresh_token: str, user_agent: Optio
     if row.used_at is not None:
         if now - row.used_at > REUSE_GRACE:
             logger.warning("Refresh token reuse: revoking session family=%s user=%s", row.family_id, row.user_id)
+            await _audit_session(db, request, row, "auth.session.reuse_revoked")
             await _revoke_family(db, row.family_id)
             raise SessionError("refresh token reused")
         raise SessionError("refresh token already rotated")
@@ -133,13 +152,14 @@ async def rotate_session(db: AsyncSession, refresh_token: str, user_agent: Optio
     return IssuedSession(user, access_token, access_expires_at, new_token, new_row.expires_at)
 
 
-async def end_session(db: AsyncSession, refresh_token: Optional[str]) -> None:
+async def end_session(db: AsyncSession, refresh_token: Optional[str], request: Optional[Request] = None) -> None:
     if not refresh_token:
         return
     row = (
         await db.execute(select(AuthSession).where(AuthSession.token_hash == _hash(refresh_token)))
     ).scalar_one_or_none()
     if row is not None:
+        await _audit_session(db, request, row, "auth.logout")
         await _revoke_family(db, row.family_id)
 
 

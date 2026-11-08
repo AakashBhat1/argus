@@ -6,6 +6,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 import enum
 
+from argus_common.audit import AuditEventMixin
 from argus_common.events import InboxEventMixin, OutboxEventMixin
 from argus_common.secretbox import SealedString
 from app.database import Base
@@ -257,6 +258,10 @@ class OutboxEvent(OutboxEventMixin, Base):
 
 class InboxEvent(InboxEventMixin, Base):
     pass
+
+
+class AuditEvent(AuditEventMixin, Base):
+    """Who changed what (see argus_common.audit)."""
 
 
 class AuthSession(Base):

@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 
 from app.cli.create_admin import AdminCreationError, create_admin
 from app.config import get_settings
-from app.models import User
+from app.models import AuditEvent, User
 
 TOKEN = "b" * 40
 BODY = {"username": "first-admin", "password": "a-long-enough-password"}
@@ -29,12 +29,14 @@ def production(monkeypatch):
     get_settings.cache_clear()
 
 
-async def test_production_refuses_anonymous_bootstrap(empty_users, production, anon_client):
+async def test_production_refuses_anonymous_bootstrap(empty_users, production, anon_client, db_session):
     assert (await anon_client.post("/api/v1/auth/users", json=BODY)).status_code == 403
     wrong = {"X-Argus-Bootstrap-Token": "c" * 40}
     assert (await anon_client.post("/api/v1/auth/users", json=BODY, headers=wrong)).status_code == 403
     ok = await anon_client.post("/api/v1/auth/users", json=BODY, headers={"X-Argus-Bootstrap-Token": TOKEN})
     assert ok.status_code == 200 and ok.json()["role"] == "admin"
+    audited = (await db_session.execute(select(AuditEvent).where(AuditEvent.target_id == ok.json()["id"]))).scalars().all()
+    assert [(a.action, a.actor, a.details["via"]) for a in audited] == [("user.create", "bootstrap", "bootstrap")]
     # Once a user exists the token is worthless.
     again = await anon_client.post("/api/v1/auth/users", json={**BODY, "username": "second"}, headers={"X-Argus-Bootstrap-Token": TOKEN})
     assert again.status_code == 403
@@ -63,6 +65,8 @@ async def test_cli_creates_an_admin(empty_users, test_session_factory, db_sessio
     assert user.role == "admin"
     stored = (await db_session.execute(select(User).where(User.username == "shell-admin"))).scalar_one()
     assert stored.hashed_password != "a-long-enough-password"
+    audited = (await db_session.execute(select(AuditEvent).where(AuditEvent.target_id == user.id))).scalars().all()
+    assert [(a.action, a.actor, a.details["via"]) for a in audited] == [("user.create", "cli:create_admin", "cli")]
     with pytest.raises(AdminCreationError, match="exists"):
         await create_admin("shell-admin", "a-long-enough-password", session_factory=test_session_factory)
     with pytest.raises(AdminCreationError):

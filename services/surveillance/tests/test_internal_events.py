@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.mesh import mesh
-from app.models import Alert
+from app.models import Alert, AuditEvent
 from app.services.authorization import authorization_registry
 from app.services.websocket_manager import ws_manager
 from argus_common.events import (
@@ -80,6 +80,12 @@ async def test_parking_alert_is_recorded_once_and_broadcast(peers, internal_clie
     assert rows[0].source == "parking" and rows[0].camera_id is None
     assert rows[0].metadata_["space_id"] == "P-07"
     ws_manager.broadcast_alert.assert_awaited_once()
+
+    # The handled event is audited once (the duplicate is not), as the peer.
+    audited = (await db_session.execute(select(AuditEvent).where(AuditEvent.target_id == event["id"]))).scalars().all()
+    assert [(a.action, a.actor, a.tenant_id) for a in audited] == [
+        ("internal.event.handled", "service:parking", "tenant-events")
+    ]
 
 
 async def test_authorized_gate_entry_grants_vehicle_occupants(peers, internal_client):

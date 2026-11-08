@@ -12,7 +12,7 @@ from app.config import get_settings
 from app.database import get_session_factory, init_db
 from app.detection import detector
 from app.models import Camera, User
-from app.routers import alerts, analytics, cameras, crime, detections, intents, internal, metrics, roboflow, security, streams, videos, zones, auth
+from app.routers import alerts, analytics, cameras, crime, detections, intents, internal, metrics, roboflow, security, streams, videos, zones, auth, audit
 from app.services.auth import authenticate_websocket, get_current_active_user, jwks_document, signing_key
 from app.services.camera_secrets import camera_secret_box, seal_stored_stream_urls
 from argus_common.web_auth import WS_AUTH_CLOSE_CODE, hold_until_expiry
@@ -131,6 +131,7 @@ app.include_router(videos.router, prefix="/api/v1")
 app.include_router(zones.router, prefix="/api/v1")
 app.include_router(intents.router, prefix="/api/v1")
 app.include_router(security.router, prefix="/api/v1")
+app.include_router(audit.router, prefix="/api/v1")
 app.include_router(internal.router)
 
 

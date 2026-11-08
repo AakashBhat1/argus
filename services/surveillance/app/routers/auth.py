@@ -31,11 +31,21 @@ from app.services.sessions import (
     set_session_cookies,
     start_session,
 )
+from argus_common.audit import AuditActor
 from argus_common.web_auth import CsrfError, check_same_origin
+from app.services import audit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
 DUMMY_PASSWORD_HASH = get_password_hash("argus-dummy-password-that-never-authenticates")
+DEFAULT_TENANT_ID = "1"
+# Limiter decision -> audit action.
+_LOGIN_ACTIONS = {
+    "authenticated": "auth.login.success",
+    "invalid_credentials": "auth.login.failure",
+    "username_lockout": "auth.login.lockout",
+    "ip_rate_limit": "auth.login.rate_limited",
+}
 
 
 def _source_ip(request: Request) -> str:
@@ -61,7 +71,24 @@ async def _authenticate(request: Request, username: str, password: str, db: Asyn
         credentials_valid=credentials_valid,
     )
 
+    # Username as typed (truncated): failed attempts for unknown names are
+    # filed under the default tenant, since there is no account to scope by.
+    typed = username[:64]
+    actor = AuditActor(
+        name=typed,
+        tenant_id=user.tenant_id if user is not None else DEFAULT_TENANT_ID,
+        id=user.id if user is not None else None,
+    )
+    audit.record(
+        db, request, actor, _LOGIN_ACTIONS.get(decision.reason, "auth.login.failure"),
+        target_type="user", target_id=user.id if user is not None else None,
+        details={"reason": decision.reason},
+    )
+
     if not decision.allowed:
+        # The limiter already committed its counters; the audit row of a
+        # refused login must persist too, although the request fails.
+        await db.commit()
         logger.warning(
             "Failed login attempt username=%r source_ip=%r reason=%s",
             username[:255],
@@ -134,7 +161,7 @@ async def refresh_session(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         if not token:
             raise SessionError("no session")
-        issued = await rotate_session(db, token, request.headers.get("user-agent"))
+        issued = await rotate_session(db, token, request.headers.get("user-agent"), request=request)
     except SessionError as exc:
         logger.info("Session refresh refused: %s", exc)
         failed = JSONResponse({"detail": "Session expired"}, status_code=status.HTTP_401_UNAUTHORIZED)
@@ -148,7 +175,7 @@ async def refresh_session(request: Request, db: AsyncSession = Depends(get_db)):
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(request: Request, db: AsyncSession = Depends(get_db)):
     _require_same_origin(request)
-    await end_session(db, request.cookies.get(session_cookie_names().refresh))
+    await end_session(db, request.cookies.get(session_cookie_names().refresh), request=request)
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookies(response)
     return response
@@ -191,7 +218,8 @@ async def create_user(
                 detail="Create the first administrator with `python -m app.cli.create_admin` on the server",
             )
         role = UserRole.ADMIN.value
-        tenant_id = "1"
+        tenant_id = DEFAULT_TENANT_ID
+        actor = AuditActor.system(tenant_id, name="bootstrap")
     else:
         if (
             current_user is None
@@ -206,6 +234,7 @@ async def create_user(
         # New accounts always belong to the creating admin's tenant so a
         # multi-tenant deployment cannot mint users into foreign tenants.
         tenant_id = current_user.tenant_id
+        actor = AuditActor.user(current_user)
 
     valid_roles = {r.value for r in UserRole}
     if role not in valid_roles:
@@ -227,6 +256,11 @@ async def create_user(
         tenant_id=tenant_id,
     )
     db.add(new_user)
+    await db.flush()
+    audit.record(
+        db, request, actor, "user.create", target_type="user", target_id=new_user.id,
+        details={"username": new_user.username, "role": role, "via": "bootstrap" if user_count == 0 else "admin"},
+    )
     await db.commit()
     await db.refresh(new_user)
     return new_user

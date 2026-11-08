@@ -22,6 +22,8 @@ from app.database import get_session_factory
 from app.models import User, UserRole
 from app.schemas import UserCreate
 from app.services.auth import get_password_hash
+from app.services import audit
+from argus_common.audit import AuditActor
 
 
 class AdminCreationError(Exception):
@@ -45,6 +47,12 @@ async def create_admin(username: str, password: str, tenant_id: str = "1", sessi
             is_active=True,
         )
         session.add(user)
+        await session.flush()
+        audit.record(
+            session, None, AuditActor.system(tenant_id, name="cli:create_admin"), "user.create",
+            target_type="user", target_id=user.id,
+            details={"username": username, "role": UserRole.ADMIN.value, "via": "cli"},
+        )
         await session.commit()
         return user
 

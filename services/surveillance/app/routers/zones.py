@@ -4,13 +4,20 @@ import json
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import get_settings
 from argus_vision.roi import ZONE_TYPES, ArmedSchedule
 from app.models import User
 from app.services.auth import get_current_active_user, require_admin
+from app.database import get_db
+from app.services import audit
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# Zones live in a JSON file, not the database. Each change stages its audit
+# row, writes the file, then get_db commits: a failed write leaves no row;
+# only a database failure after the write can leave a change unaudited.
 
 router = APIRouter(prefix="/zones", tags=["zones"])
 
@@ -167,10 +174,21 @@ async def list_zone_types(current_user: User = Depends(get_current_active_user))
     ]
 
 
+def _zone_summary(zone: dict) -> dict:
+    return {
+        "name": zone.get("name"),
+        "zone_type": zone.get("zone_type"),
+        "camera_ids": zone.get("camera_ids"),
+        "points": len(zone.get("points") or []),
+    }
+
+
 @router.post("/", response_model=ZoneResponse, status_code=201)
 async def create_zone(
     data: ZoneCreate,
+    request: Request,
     current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a new ROI zone with normalized [0,1] polygon points."""
     zones = _load_zones()
@@ -178,6 +196,7 @@ async def create_zone(
     new_id = max(existing_ids, default=0) + 1
     new_zone = _serialize(new_id, data)
     zones.append(new_zone)
+    audit.record(db, request, current_user, "zone.create", "zone", new_id, _zone_summary(new_zone))
     _save_zones(zones)
     return _to_response(new_zone)
 
@@ -185,13 +204,17 @@ async def create_zone(
 @router.delete("/{zone_id}", status_code=204)
 async def delete_zone(
     zone_id: int,
+    request: Request,
     current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """Delete an ROI zone by ID."""
     zones = _load_zones()
     filtered = [z for z in zones if z.get("zone_id") != zone_id]
     if len(filtered) == len(zones):
         raise HTTPException(status_code=404, detail="Zone not found")
+    removed = next(z for z in zones if z.get("zone_id") == zone_id)
+    audit.record(db, request, current_user, "zone.delete", "zone", zone_id, _zone_summary(removed))
     _save_zones(filtered)
 
 
@@ -199,13 +222,16 @@ async def delete_zone(
 async def update_zone(
     zone_id: int,
     data: ZoneCreate,
+    request: Request,
     current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """Update an existing ROI zone (camera binding is preserved unless provided)."""
     zones = _load_zones()
     for i, z in enumerate(zones):
         if z.get("zone_id") == zone_id:
             zones[i] = _serialize(zone_id, data, existing=z)
+            audit.record(db, request, current_user, "zone.update", "zone", zone_id, _zone_summary(zones[i]))
             _save_zones(zones)
             return _to_response(zones[i])
     raise HTTPException(status_code=404, detail="Zone not found")
