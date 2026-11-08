@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import cv2
@@ -213,8 +213,14 @@ class IntrusionEvent:
         }
 
 
+class ZoneSource(Protocol):
+    """Where a filter gets its zones (a config file, or a tenant's database rows)."""
+
+    def zones_for_camera(self, camera_id: str) -> list[RoiZone]: ...
+
+
 class RoiZoneRepository:
-    """Loads and caches ROI zones from configuration."""
+    """Loads and caches ROI zones from a JSON file (the standalone roi_monitor tool)."""
 
     def __init__(self, config_path: Optional[str] = None):
         settings = get_settings()
@@ -458,7 +464,7 @@ class RoiIntrusionFilter:
     def __init__(
         self,
         camera_id: str,
-        zone_repository: Optional[RoiZoneRepository] = None,
+        zone_repository: Optional[ZoneSource] = None,
         intruder_classes: Optional[Iterable[str]] = None,
         alert_cooldown_sec: Optional[float] = None,
         track_grace_sec: Optional[float] = None,

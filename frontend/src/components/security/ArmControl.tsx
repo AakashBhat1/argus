@@ -8,6 +8,8 @@ interface Props {
   mode: ArmMode;
   busy: boolean;
   onChange: (mode: ArmMode) => void;
+  /** Operators see the mode but cannot change it (the API would refuse). */
+  readOnly?: boolean;
 }
 
 const OPTIONS: { value: ArmMode; label: string; hint: string; icon: typeof Shield; active: string }[] = [
@@ -16,7 +18,7 @@ const OPTIONS: { value: ArmMode; label: string; hint: string; icon: typeof Shiel
   { value: "disarmed", label: "Disarmed", hint: "Presence is logged, nobody is paged", icon: ShieldCheck, active: "bg-emerald-500/15 text-emerald-200 border-emerald-500/40" },
 ];
 
-export default function ArmControl({ mode, busy, onChange }: Props) {
+export default function ArmControl({ mode, busy, onChange, readOnly = false }: Props) {
   return (
     <div className="flex items-center gap-1 bg-slate-900/60 border border-slate-700/40 rounded-xl p-1">
       {OPTIONS.map((opt) => {
@@ -26,8 +28,8 @@ export default function ArmControl({ mode, busy, onChange }: Props) {
           <button
             key={opt.value}
             onClick={() => onChange(opt.value)}
-            disabled={busy}
-            title={opt.hint}
+            disabled={busy || readOnly}
+            title={readOnly ? "Administrators only" : opt.hint}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all",
               active ? opt.active : "border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/60"

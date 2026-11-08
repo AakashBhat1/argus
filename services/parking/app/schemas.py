@@ -207,3 +207,11 @@ class ParkingChatResponse(BaseModel):
     executed: bool = False
     result: Optional[dict] = None
     error: Optional[str] = None
+    # A validated action waits here until the same admin confirms it.
+    requires_confirmation: bool = False
+    proposal_id: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+
+class ParkingChatConfirmRequest(BaseModel):
+    proposal_id: str = Field(..., min_length=36, max_length=36, pattern=r"^[0-9a-f-]{36}$")

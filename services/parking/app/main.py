@@ -4,6 +4,7 @@ Runs on its own host. Talks to surveillance only through the internal
 mTLS API (events) and trusts user tokens issued by surveillance (JWKS).
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -16,7 +17,8 @@ from app.config import get_settings
 from app.database import get_session_factory, init_db
 from app.mesh import mesh
 from app.models import Camera
-from app.routers import cameras, internal, parking, parking_chat
+from app.routers import audit, cameras, internal, parking, parking_chat
+from app.services.retention import retention_worker
 from app.services.auth import authenticate_websocket
 from app.services.camera_secrets import camera_secret_box, seal_stored_stream_urls
 from argus_common.web_auth import WS_AUTH_CLOSE_CODE, hold_until_expiry
@@ -58,9 +60,11 @@ async def lifespan(app: FastAPI):
     await inference_pool.start()
     stream_manager.set_inference_pool(inference_pool)
     outbox_runner.start()
+    retention_task = asyncio.create_task(retention_worker())
 
     yield
 
+    retention_task.cancel()
     await outbox_runner.stop()
     await stream_manager.stop_all()
     await inference_pool.shutdown()
@@ -87,6 +91,7 @@ app.include_router(cameras.router, prefix="/api/v1")
 app.include_router(cameras.streams_router, prefix="/api/v1")
 app.include_router(parking.router, prefix="/api/v1")
 app.include_router(parking_chat.router, prefix="/api/v1")
+app.include_router(audit.router, prefix="/api/v1")
 app.include_router(internal.router)
 
 
@@ -117,7 +122,10 @@ async def _serve_channel(websocket: WebSocket, channel: str) -> None:
         if camera is None:
             await websocket.close(code=WS_AUTH_CLOSE_CODE)
             return
-    if not await ws_manager.connect(websocket, channel, tenant_id=principal.tenant_id, subprotocol=auth.subprotocol):
+    if not await ws_manager.connect(
+        websocket, channel, tenant_id=principal.tenant_id, subprotocol=auth.subprotocol,
+        user_id=principal.id or principal.username,
+    ):
         return
     try:
         await hold_until_expiry(websocket, auth.expires_at)

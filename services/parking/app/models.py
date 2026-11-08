@@ -16,6 +16,7 @@ from sqlalchemy.orm import relationship
 from argus_common.secretbox import SealedString
 from app.services.camera_secrets import STREAM_URL_AAD, camera_secret_box
 
+from argus_common.audit import AuditEventMixin
 from argus_common.events import InboxEventMixin, OutboxEventMixin
 from app.database import Base
 from app.utils import utc_now
@@ -101,6 +102,29 @@ class OutboxEvent(OutboxEventMixin, Base):
 
 class InboxEvent(InboxEventMixin, Base):
     pass
+
+
+class AuditEvent(AuditEventMixin, Base):
+    """Who changed what (see argus_common.audit)."""
+
+
+class ParkbotProposal(Base):
+    """A validated ParkBot action waiting for the admin's explicit confirmation.
+
+    The model output only ever *proposes*; nothing changes until the same
+    admin confirms within the TTL. Claiming is atomic (consumed_at), so a
+    proposal executes at most once.
+    """
+
+    __tablename__ = "parkbot_proposals"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), nullable=False, index=True)
+    actor_id = Column(String(64), nullable=False)
+    command = Column(JSON, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    expires_at = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
 
 
 class VehicleProfile(Base):

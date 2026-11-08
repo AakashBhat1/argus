@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from argus_common.mesh import ServiceMeshSettings
@@ -200,7 +200,11 @@ class Settings(VisionSettings, ServiceMeshSettings):
 
     # -- Data Retention -------------------------------------------------------
     RETENTION_ENABLED: bool = True
+    # How quickly a zone change made by another worker reaches this one.
+    ZONE_REFRESH_SECONDS: int = Field(default=5, ge=1)
     RETENTION_DAYS: int = 30
+    # Admin audit log rows are kept longer than telemetry (DPDP accountability).
+    AUDIT_RETENTION_DAYS: int = Field(default=365, ge=1)
     RETENTION_RUN_INTERVAL_SECONDS: int = 60 * 60 * 24
     # Keep unresolved/active alerts by default.
     RETENTION_DELETE_RESOLVED_ALERTS_ONLY: bool = True

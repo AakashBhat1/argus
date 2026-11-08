@@ -14,7 +14,8 @@ interface FetchBehaviour {
 function sendToLogin(): void {
   clearSession();
   if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-    window.location.href = "/login";
+    // A full reload (not client navigation) drops all in-memory state.
+    window.location.assign(new URL("/login", window.location.origin).href);
   }
 }
 
@@ -27,7 +28,7 @@ async function authorizedFetch(url: string, init?: RequestInit): Promise<Respons
   });
 }
 
-async function fetchApi<T>(endpoint: string, options?: RequestInit, behaviour?: FetchBehaviour): Promise<T> {
+export async function fetchApi<T>(endpoint: string, options?: RequestInit, behaviour?: FetchBehaviour): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options?.headers as Record<string, string> || {}),
@@ -503,6 +504,10 @@ export interface ParkingChatResponse {
   executed: boolean;
   result?: Record<string, any> | null;
   error?: string | null;
+  /** A validated action that runs only after chatConfirm(proposal_id). */
+  requires_confirmation?: boolean;
+  proposal_id?: string | null;
+  expires_at?: string | null;
 }
 
 export interface FeedMessage {
@@ -702,6 +707,11 @@ export const api = {
       fetchApi<ParkingChatResponse>("/parking/chat/command", {
         method: "POST",
         body: JSON.stringify({ message }),
+      }),
+    chatConfirm: (proposalId: string) =>
+      fetchApi<ParkingChatResponse>("/parking/chat/confirm", {
+        method: "POST",
+        body: JSON.stringify({ proposal_id: proposalId }),
       }),
     slots: (cameraId: string) =>
       fetchApi<{ space_id: string; polygon: number[][] }[]>(`/parking/cameras/${cameraId}/slots`),

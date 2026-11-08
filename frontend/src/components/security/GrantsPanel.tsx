@@ -9,6 +9,8 @@ interface Props {
   grants: Grant[];
   cameras: Camera[];
   onChanged: () => void;
+  /** Operators see grants but cannot change them (the API would refuse). */
+  readOnly?: boolean;
 }
 
 function remaining(seconds: number): string {
@@ -19,7 +21,7 @@ function remaining(seconds: number): string {
   return `${(m / 60).toFixed(1)} h`;
 }
 
-export default function GrantsPanel({ grants, cameras, onChanged }: Props) {
+export default function GrantsPanel({ grants, cameras, onChanged, readOnly = false }: Props) {
   const [minutes, setMinutes] = useState(15);
   const [label, setLabel] = useState("Expected visitor");
   const [busy, setBusy] = useState<string | null>(null);
@@ -47,6 +49,7 @@ export default function GrantsPanel({ grants, cameras, onChanged }: Props) {
         <div className="card-header mb-0">Access &amp; Authorization</div>
         <span className="badge bg-slate-800/60 text-slate-400 border-slate-700/40">{grants.length} active</span>
       </div>
+      {readOnly && <p className="text-[11px] text-slate-500 mb-3">View only: administrators manage access grants.</p>}
 
       {/* Expect visitor */}
       <div className="rounded-xl border border-slate-700/30 bg-slate-800/20 p-3 space-y-2">
@@ -58,7 +61,7 @@ export default function GrantsPanel({ grants, cameras, onChanged }: Props) {
           <input type="number" className="input w-20 text-xs" value={minutes} min={1} max={1440} onChange={(e) => setMinutes(parseInt(e.target.value) || 15)} />
           <button
             onClick={() => run("site", () => api.security.grantSite({ minutes, label }))}
-            disabled={busy !== null}
+            disabled={readOnly || busy !== null}
             className="btn-primary text-xs px-3"
           >
             {busy === "site" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
@@ -100,7 +103,7 @@ export default function GrantsPanel({ grants, cameras, onChanged }: Props) {
               })
             )
           }
-          disabled={busy !== null || !plate}
+          disabled={readOnly || busy !== null || !plate}
           className={cn("w-full py-2 rounded-lg text-xs border transition-colors", profile === "blacklist" ? "border-red-500/30 text-red-300 hover:bg-red-500/10" : "border-slate-600/40 text-slate-300 hover:bg-slate-800/60")}
         >
           {busy === "plate" ? <Loader2 className="w-3.5 h-3.5 animate-spin inline" /> : null} Register arrival
@@ -133,13 +136,15 @@ export default function GrantsPanel({ grants, cameras, onChanged }: Props) {
                 {g.scope}{g.track_id != null ? ` · track #${g.track_id}` : ""} · {remaining(g.seconds_remaining)} left
               </p>
             </div>
-            <button
-              onClick={() => run(g.grant_id, () => api.security.revoke(g.grant_id))}
-              className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10"
-              aria-label="Revoke"
-            >
-              {busy === g.grant_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-            </button>
+            {!readOnly && (
+              <button
+                onClick={() => run(g.grant_id, () => api.security.revoke(g.grant_id))}
+                className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10"
+                aria-label="Revoke"
+              >
+                {busy === g.grant_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              </button>
+            )}
           </div>
         ))}
       </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useIsAdmin, usePolling } from "@/lib/hooks";
 import { Activity, Camera as CameraIcon, Ruler, ShieldAlert, Users, Wifi, WifiOff } from "lucide-react";
 import { api, type ArmMode, type Camera, type FeedData, type SecurityState, type Alert } from "@/lib/api";
 import { useWebSocket } from "@/lib/websocket";
@@ -37,6 +38,7 @@ export default function SecurityPage() {
   const [escalations, setEscalations] = useState<Escalation[]>([]);
   const lastSampleRef = useRef<number>(0);
   const liveRef = useRef<Record<string, CameraLive>>({});
+  const isAdmin = useIsAdmin();
 
   const load = useCallback(async () => {
     try {
@@ -48,9 +50,9 @@ export default function SecurityPage() {
     }
   }, []);
 
+  usePolling(load, 15000);
+
   useEffect(() => {
-    load();
-    const i = setInterval(load, 15000);
     // Seed the escalation feed with recent persisted alerts.
     api.alerts
       .list({ limit: "20" })
@@ -69,9 +71,8 @@ export default function SecurityPage() {
             }))
         )
       )
-      .catch(() => {});
-    return () => clearInterval(i);
-  }, [load]);
+      .catch((err) => console.error("Escalation seed load failed:", err));
+  }, []);
 
   // Live WS processing
   useEffect(() => {
@@ -187,7 +188,7 @@ export default function SecurityPage() {
             {isConnected ? <Wifi className="w-3.5 h-3.5 text-emerald-400" /> : <WifiOff className="w-3.5 h-3.5 text-red-400" />}
             <span className={isConnected ? "text-emerald-400 font-medium" : "text-red-400"}>{isConnected ? "Live" : "Disconnected"}</span>
           </div>
-          <ArmControl mode={state?.arm_mode ?? "auto"} busy={armBusy} onChange={handleArm} />
+          <ArmControl mode={state?.arm_mode ?? "auto"} busy={armBusy} onChange={handleArm} readOnly={!isAdmin} />
         </div>
       </div>
 
@@ -265,7 +266,7 @@ export default function SecurityPage() {
       {/* Grants */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         <div className="xl:col-span-2">
-          <GrantsPanel grants={state?.grants ?? []} cameras={cameras} onChanged={load} />
+          <GrantsPanel grants={state?.grants ?? []} cameras={cameras} onChanged={load} readOnly={!isAdmin} />
         </div>
         <div className="card">
           <div className="card-header">How the score works</div>

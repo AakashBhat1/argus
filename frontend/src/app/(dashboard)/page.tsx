@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useCallback } from "react";
+import { usePolling } from "@/lib/hooks";
 import { Camera, Eye, AlertTriangle, Zap, Cpu } from "lucide-react";
 import {
   api,
@@ -26,13 +27,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const { lastMessage, isConnected } = useWebSocket("global");
 
-  useEffect(() => {
-    loadData();
-    const i = setInterval(loadData, 30000);
-    return () => clearInterval(i);
-  }, []);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     try {
       const [s, t, c, p, h] = await Promise.all([
         api.analytics.dashboard(),
@@ -47,7 +42,9 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  usePolling(loadData, 30000);
 
   return (
     <div className="space-y-6 animate-fade-in">

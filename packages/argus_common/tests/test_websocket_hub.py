@@ -88,3 +88,21 @@ async def test_disconnect_is_idempotent_and_cleans_up():
     await hub.disconnect(ws, "cam-9", tenant_id="t")
     await hub.disconnect(ws, "cam-9", tenant_id="t")
     assert hub.connection_count == 0 and hub._sockets == {}
+
+
+async def test_per_user_cap_and_release_on_disconnect_or_drop():
+    hub = WebSocketHub(max_connections_per_tenant=10, max_connections_per_user=2)
+    first, second, third = FakeSocket(), FakeSocket(fail=True), FakeSocket()
+    assert await hub.connect(first, "global", tenant_id="t", user_id="u1")
+    assert await hub.connect(second, "alerts", tenant_id="t", user_id="u1")
+    assert not await hub.connect(third, "global", tenant_id="t", user_id="u1")
+    assert third.closed_with == TRY_AGAIN_LATER
+    # Another user of the same tenant, and the same id in another tenant, are unaffected.
+    assert await hub.connect(FakeSocket(), "global", tenant_id="t", user_id="u2")
+    assert await hub.connect(FakeSocket(), "global", tenant_id="other", user_id="u1")
+
+    await hub.disconnect(first, "global", tenant_id="t")
+    # A dead socket dropped during a broadcast also frees its slot.
+    await hub.broadcast_alert({"type": "x"}, tenant_id="t")
+    assert hub.user_connection_count("t", "u1") == 0
+    assert await hub.connect(FakeSocket(), "global", tenant_id="t", user_id="u1")

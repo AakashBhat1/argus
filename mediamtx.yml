@@ -14,6 +14,8 @@ rtspAddress: :8554
 rtspTransports: [tcp]
 webrtc: yes
 webrtcAddress: :8889
+# Overridden per deployment by MTX_WEBRTCALLOWORIGINS (https://<public name>).
+webrtcAllowOrigins: ["https://localhost"]
 # Only what the dashboard needs.
 rtmp: no
 hls: no

@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
+
+from app.models import AuditEvent
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
@@ -123,7 +125,7 @@ def surveillance_signer():
     mesh.reset()
 
 
-async def test_arm_mode_event_updates_site_state(app_with_db, surveillance_signer, monkeypatch):
+async def test_arm_mode_event_updates_site_state(app_with_db, surveillance_signer, monkeypatch, test_session_factory):
     monkeypatch.setattr(ws_manager, "broadcast_to_channel", AsyncMock())
     envelope = EventEnvelope.create(
         "security.arm_mode_changed", "surveillance", "tenant-arm", ArmModeChanged(mode="armed", actor="admin")
@@ -137,6 +139,11 @@ async def test_arm_mode_event_updates_site_state(app_with_db, surveillance_signe
         response = await client.post("/internal/v1/events", json=envelope, headers=headers)
         assert response.status_code == 202, response.text
         assert site_state.arm_mode("tenant-arm") == "armed"
+        async with test_session_factory() as session:
+            audited = (await session.execute(select(AuditEvent).where(AuditEvent.target_id == envelope["id"]))).scalars().all()
+        assert [(a.action, a.actor, a.tenant_id) for a in audited] == [
+            ("internal.event.handled", "service:surveillance", "tenant-arm")
+        ]
         # Missing mTLS header / token -> refused.
         assert (await client.post("/internal/v1/events", json=envelope)).status_code in (401, 403)
 

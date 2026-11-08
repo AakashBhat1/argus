@@ -17,6 +17,8 @@ dependencies = [
   "setuptools==80.9.0",
   "deep-sort-realtime==1.3.2",
   "scipy==1.12.0",
+  # IANA zone data for zoneinfo where the OS has none (Windows, minimal images).
+  "tzdata==2026.6",
 ]
 
 [tool.setuptools.packages.find]

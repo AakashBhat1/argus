@@ -12,7 +12,9 @@ from app.mesh import mesh
 from app.models import InboxEvent
 from app.services.site_state import site_state
 from app.services.websocket_manager import ws_manager
+from argus_common.audit import AuditActor
 from argus_common.events import ArmModeChanged, EventEnvelope, EventError, record_inbox
+from app.services import audit
 from argus_common.tokens import ServicePrincipal
 
 logger = logging.getLogger(__name__)
@@ -34,17 +36,22 @@ async def receive_event(
     try:
         envelope = EventEnvelope.from_dict(await request.json())
     except (EventError, ValueError) as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     if envelope.source != principal.service:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "event source does not match caller")
     if envelope.type not in ACCEPTED_EVENTS.get(principal.service, set()):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "event type not accepted from this peer")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "event type not accepted from this peer")
 
     async with database.get_session_factory()() as session:
         if not await record_inbox(session, InboxEvent, envelope):
             return JSONResponse({"status": "duplicate"}, status_code=status.HTTP_200_OK)
         data: ArmModeChanged = envelope.validated_data()  # type: ignore[assignment]
         site_state.set_arm_mode(envelope.tenant_id, data.mode)
+        audit.record(
+            session, request, AuditActor.service(principal.service, envelope.tenant_id),
+            "internal.event.handled", "event", envelope.id,
+            {"event_type": envelope.type, "mode": data.mode},
+        )
         await session.commit()
 
     await ws_manager.broadcast_to_channel(

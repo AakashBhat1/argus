@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from argus_vision.geometry import DEFAULT_CLASS_SIZES_M
@@ -17,6 +17,7 @@ from app.services.auth import get_current_active_user, require_admin
 from app.services.authorization import ARM_MODES, authorization_registry
 from app.services.stream_manager import stream_manager
 from app.services.websocket_manager import ws_manager
+from app.services import audit
 
 router = APIRouter(prefix="/security", tags=["security"])
 
@@ -87,13 +88,16 @@ def _live_risk(tenant_id: str) -> list[dict]:
 @router.put("/arm")
 async def set_arm_mode(
     data: ArmRequest,
+    request: Request,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     tenant_id = current_user.tenant_id
+    previous = authorization_registry.arm_mode(tenant_id)
     mode = authorization_registry.set_arm_mode(tenant_id, data.mode, actor=current_user.username)
     # Parking (on its own host) escalates its anomaly rules while armed.
     publish_arm_mode(db, tenant_id, mode, current_user.username)
+    audit.record(db, request, current_user, "security.arm_mode.set", "tenant", tenant_id, {"from": previous, "to": mode})
     await db.commit()
     await _broadcast_state(tenant_id, {"type": "arm_mode", "mode": mode, "actor": current_user.username})
     return {"arm_mode": mode}
@@ -107,12 +111,17 @@ async def list_grants(current_user: User = Depends(get_current_active_user)):
 @router.post("/grants/site", status_code=201)
 async def grant_site(
     data: SiteGrantRequest,
+    request: Request,
     current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     tenant_id = current_user.tenant_id
     grant = authorization_registry.grant_site(
         tenant_id, minutes=data.minutes, label=data.label, note=data.note
     )
+    audit.record(db, request, current_user, "security.grant.create", "grant", grant.grant_id,
+                 {"scope": "site", "minutes": data.minutes, "label": data.label})
+    await db.commit()
     await _broadcast_state(tenant_id, {"type": "grant_added", "grant": grant.to_dict()})
     return grant.to_dict()
 
@@ -120,7 +129,9 @@ async def grant_site(
 @router.post("/grants/track", status_code=201)
 async def grant_track(
     data: TrackGrantRequest,
+    request: Request,
     current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     tenant_id = current_user.tenant_id
     stream = stream_manager.get_stream(data.camera_id)
@@ -134,6 +145,10 @@ async def grant_track(
         minutes=data.minutes,
         note=data.note,
     )
+    audit.record(db, request, current_user, "security.grant.create", "grant", grant.grant_id,
+                 {"scope": "track", "camera_id": data.camera_id, "track_id": data.track_id,
+                  "minutes": data.minutes, "label": data.label})
+    await db.commit()
     await _broadcast_state(tenant_id, {"type": "grant_added", "grant": grant.to_dict()})
     return grant.to_dict()
 
@@ -141,7 +156,9 @@ async def grant_track(
 @router.post("/vehicles/register", status_code=201)
 async def register_vehicle(
     data: VehicleRegisterRequest,
+    request: Request,
     current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """Simulate a gate plate read (demo / integration testing)."""
     tenant_id = current_user.tenant_id
@@ -153,6 +170,10 @@ async def register_vehicle(
         profile_type=data.profile_type,
         owner_name=data.owner_name,
     )
+    audit.record(db, request, current_user, "security.vehicle.register", "plate", data.plate_text.upper(),
+                 {"camera_id": data.camera_id, "track_id": data.track_id, "profile_type": data.profile_type,
+                  "granted": grant is not None})
+    await db.commit()
     await _broadcast_state(
         tenant_id,
         {"type": "vehicle_registered", "plate_text": data.plate_text.upper(), "grant": grant.to_dict() if grant else None},
@@ -163,11 +184,15 @@ async def register_vehicle(
 @router.delete("/grants/{grant_id}", status_code=204)
 async def revoke_grant(
     grant_id: str,
+    request: Request,
     current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     tenant_id = current_user.tenant_id
     if not authorization_registry.revoke(tenant_id, grant_id):
         raise HTTPException(status_code=404, detail="Grant not found")
+    audit.record(db, request, current_user, "security.grant.revoke", "grant", grant_id)
+    await db.commit()
     await _broadcast_state(tenant_id, {"type": "grant_revoked", "grant_id": grant_id})
 
 

@@ -3,7 +3,7 @@
 import os
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from argus_common.mesh import ServiceMeshSettings
@@ -98,6 +98,11 @@ class Settings(VisionSettings, ServiceMeshSettings):
     # -- Smart Parking --------------------------------------------------------
     # Hourly tariff in INR (rounded up per hour after free-window).
     PARKING_RATE_PER_HOUR: float = 20.0
+    # A ParkBot proposal must be confirmed by the same admin within this window.
+    PARKBOT_CONFIRM_TTL_SECONDS: int = Field(default=300, ge=30, le=3600)
+    # Admin audit log retention (DPDP accountability); purged daily.
+    AUDIT_RETENTION_DAYS: int = Field(default=365, ge=1)
+    AUDIT_PURGE_INTERVAL_SECONDS: int = Field(default=24 * 60 * 60, ge=60)
     # Stays under this many minutes bill a flat short-stay rate.
     PARKING_FREE_MINUTES: int = 5
     PARKING_SHORT_STAY_RATE: float = 10.0

@@ -49,8 +49,11 @@ function originLabel(origin?: string): string {
 }
 
 export default function LiveFeed({ lastMessage, cameraId, compact = false }: Props) {
-  const feedsRef = useRef<Record<string, FeedData>>({});
+  // Maps, not objects: camera ids arrive over the wire and must not be property names.
+  const feedsRef = useRef<ReadonlyMap<string, FeedData>>(new Map());
   const [cameraIds, setCameraIds] = useState<string[]>([]);
+  // What the camera picker shows; refs must not be read during render.
+  const [cameraMeta, setCameraMeta] = useState<ReadonlyMap<string, { name?: string; isVideo?: boolean }>>(new Map());
   const [selectedCamera, setSelectedCamera] = useState<string | null>(cameraId ?? null);
   const [currentFeed, setCurrentFeed] = useState<FeedData | null>(null);
   const [isPaused, setIsPaused] = useState(false);
@@ -66,9 +69,10 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
     const camId = data.camera_id;
     if (cameraId && camId !== cameraId) return;
 
-    feedsRef.current = { ...feedsRef.current, [camId]: data };
-    const ids = Object.keys(feedsRef.current);
+    feedsRef.current = new Map(feedsRef.current).set(camId, data);
+    const ids = Array.from(feedsRef.current.keys());
     setCameraIds(ids);
+    setCameraMeta((prev) => new Map(prev).set(camId, { name: data.camera_name, isVideo: data.is_video_source }));
 
     if (!selectedCamera) setSelectedCamera(camId);
     if (camId === selectedCamera || (!selectedCamera && ids.length === 1)) {
@@ -79,7 +83,7 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
 
   function handleSelectCamera(camId: string) {
     setSelectedCamera(camId);
-    const feed = feedsRef.current[camId];
+    const feed = feedsRef.current.get(camId);
     if (feed) {
       setCurrentFeed(feed);
       setIsPaused(feed.is_paused ?? false);
@@ -176,7 +180,7 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
               {showCameraSelect && (
                 <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-lg border border-slate-700/40 bg-slate-900/95 backdrop-blur-xl shadow-xl overflow-hidden">
                   {cameraIds.map((id) => {
-                    const feed = feedsRef.current[id];
+                    const feed = cameraMeta.get(id);
                     return (
                       <button
                         key={id}
@@ -186,8 +190,8 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
                           id === selectedCamera ? "bg-blue-500/10 text-blue-300" : "text-slate-400 hover:bg-slate-800/60"
                         )}
                       >
-                        {feed?.is_video_source ? <Film className="w-3 h-3 text-violet-400" /> : <Radio className="w-3 h-3 text-emerald-400" />}
-                        <span className="truncate">{feed?.camera_name || id}</span>
+                        {feed?.isVideo ? <Film className="w-3 h-3 text-violet-400" /> : <Radio className="w-3 h-3 text-emerald-400" />}
+                        <span className="truncate">{feed?.name || id}</span>
                       </button>
                     );
                   })}

@@ -17,7 +17,9 @@ from app.mesh import ACCEPTED_EVENTS, mesh
 from app.models import InboxEvent
 from app.services.event_handlers import HANDLERS
 from app.services.websocket_manager import ws_manager
+from argus_common.audit import AuditActor
 from argus_common.events import EventEnvelope, EventError, record_inbox
+from app.services import audit
 from argus_common.tokens import ServicePrincipal
 
 logger = logging.getLogger(__name__)
@@ -38,19 +40,23 @@ async def receive_event(
     try:
         envelope = EventEnvelope.from_dict(await request.json())
     except (EventError, ValueError) as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     # A peer may only speak for itself, and only publish what it owns.
     if envelope.source != principal.service:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "event source does not match caller")
     if envelope.type not in ACCEPTED_EVENTS.get(principal.service, set()):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "event type not accepted from this peer")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "event type not accepted from this peer")
 
     broadcasts: list[dict] = []
     async with database.get_session_factory()() as session:
         if not await record_inbox(session, InboxEvent, envelope):
             return JSONResponse({"status": "duplicate"}, status_code=status.HTTP_200_OK)
         await HANDLERS[envelope.type](session, envelope, broadcasts)
+        audit.record(
+            session, request, AuditActor.service(principal.service, envelope.tenant_id),
+            "internal.event.handled", "event", envelope.id, {"event_type": envelope.type},
+        )
         await session.commit()
 
     for payload in broadcasts:

@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
+from sqlalchemy import delete, select
 
+from app.models import RoiZoneRecord
 from app.services.authorization import authorization_registry
 
 
 @pytest.fixture(autouse=True)
-def _isolated_zone_config(tmp_path, monkeypatch):
-    """Point the zones router at a temp file so tests never touch the repo config."""
-    from app.config import get_settings
-
-    settings = get_settings()
-    cfg = tmp_path / "zones.json"
-    monkeypatch.setattr(settings, "ROI_ZONES_CONFIG_PATH", str(cfg))
-    yield cfg
+async def _no_leftover_zones(test_session_factory):
+    """The test database is shared by the whole run."""
+    yield
+    async with test_session_factory() as session:
+        await session.execute(delete(RoiZoneRecord))
+        await session.commit()
 
 
 @pytest.mark.asyncio
@@ -104,12 +102,13 @@ async def test_security_requires_auth(anon_client):
 
 
 @pytest.mark.asyncio
-async def test_zone_semantics_roundtrip(auth_client, _isolated_zone_config):
+async def test_zone_semantics_roundtrip(auth_client, sample_camera, db_session):
+    await db_session.commit()
     payload = {
         "name": "Back yard",
         "points": [{"x": 0.1, "y": 0.2}, {"x": 0.9, "y": 0.2}, {"x": 0.9, "y": 0.9}, {"x": 0.1, "y": 0.9}],
         "threshold_sec": 4,
-        "camera_ids": ["cam-1"],
+        "camera_ids": [sample_camera.id],
         "zone_type": "perimeter",
         "armed_schedule": {"mode": "schedule", "windows": [{"start": "22:00", "end": "06:00", "days": [0, 1, 2, 3, 4]}], "tz": "Asia/Kolkata"},
         "allowed_classes": ["Dog", "cat"],
@@ -129,12 +128,12 @@ async def test_zone_semantics_roundtrip(auth_client, _isolated_zone_config):
     update["zone_type"] = "entrance"
     res = await auth_client.put(f"/api/v1/zones/{zone['zone_id']}", json=update)
     assert res.status_code == 200
-    assert res.json()["camera_ids"] == ["cam-1"]
+    assert res.json()["camera_ids"] == [sample_camera.id]
     assert res.json()["zone_type"] == "entrance"
 
-    stored = json.loads(_isolated_zone_config.read_text())
-    assert stored[0]["zone_type"] == "entrance"
-    assert stored[0]["camera_ids"] == ["cam-1"]
+    stored = (await db_session.execute(select(RoiZoneRecord))).scalars().one()
+    assert stored.zone_type == "entrance"
+    assert stored.camera_ids == [sample_camera.id]
 
     res = await auth_client.get("/api/v1/zones/types")
     assert res.status_code == 200

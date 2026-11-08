@@ -89,12 +89,7 @@ export default function ZoneEditor({ cameraId, cameraName, service = "surveillan
   const [cameraRole, setCameraRole] = useState<CameraRole>("surveillance");
   const [gateRole, setGateRole] = useState<"gate_entry" | "gate_exit">("gate_entry");
 
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraId]);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -131,7 +126,13 @@ export default function ZoneEditor({ cameraId, cameraName, service = "surveillan
     } finally {
       setLoading(false);
     }
-  }
+  }, [cameraId, service]);
+
+  useEffect(() => {
+    // Deferred so the loader's setLoading(true) is not a synchronous effect update.
+    const t = setTimeout(() => void loadData(), 0);
+    return () => clearTimeout(t);
+  }, [loadData]);
 
   // ── Canvas rendering ────────────────────────────────────────────────────────
   const draw = useCallback(() => {

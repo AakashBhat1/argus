@@ -1,9 +1,56 @@
+import hashlib
 import logging
+from pathlib import Path
+
 import numpy as np
+import torch
 from deep_sort_realtime.deepsort_tracker import DeepSort
+from deep_sort_realtime.embedder import embedder_pytorch
+
 from argus_vision.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+# deep-sort-realtime 1.3.2 loads its bundled MobileNetV2 weights with a bare
+# ``torch.load(path)``. That is only safe when torch defaults to
+# ``weights_only=True`` (torch >= 2.6). Both conditions are checked before a
+# tracker is built, so a swapped weight file or a torch downgrade fails closed
+# instead of unpickling arbitrary objects.
+EMBEDDER_WEIGHTS_SHA256 = "2f518e773d4402dde55f981ae3078a72ba95c3adccae1d55051a4be844d50197"
+MIN_SAFE_TORCH = (2, 6)
+
+
+class UnsafeEmbedderError(RuntimeError):
+    """The appearance embedder cannot be loaded safely."""
+
+
+def _torch_version() -> tuple[int, int]:
+    major, minor = torch.__version__.split("+")[0].split(".")[:2]
+    return int(major), int(minor)
+
+
+def verify_embedder_weights(path: str | Path | None = None) -> None:
+    """Refuse to build DeepSort unless its weights and torch are trusted."""
+    if _torch_version() < MIN_SAFE_TORCH:
+        raise UnsafeEmbedderError(
+            f"torch {torch.__version__} loads pickles by default; need >= 2.6"
+        )
+    weights = Path(path or embedder_pytorch.MOBILENETV2_BOTTLENECK_WTS)
+    digest = hashlib.sha256(weights.read_bytes()).hexdigest()
+    if digest != EMBEDDER_WEIGHTS_SHA256:
+        raise UnsafeEmbedderError(f"unexpected embedder weights SHA-256 {digest} at {weights}")
+
+
+def _build_deepsort() -> DeepSort:
+    verify_embedder_weights()
+    settings = get_settings()
+    return DeepSort(
+        max_age=settings.TRACKER_MAX_AGE,
+        n_init=settings.TRACKER_N_INIT,
+        max_iou_distance=0.7,
+        max_cosine_distance=0.3,
+        nn_budget=100,
+    )
 
 
 class MultiObjectTracker:
@@ -15,15 +62,7 @@ class MultiObjectTracker:
     """
 
     def __init__(self):
-        settings = get_settings()
-        self.tracker = DeepSort(
-            
-            max_age=settings.TRACKER_MAX_AGE,
-            n_init=settings.TRACKER_N_INIT,
-            max_iou_distance=0.7,
-            max_cosine_distance=0.3,
-            nn_budget=100,
-        )
+        self.tracker = _build_deepsort()
         self._frame_count = 0
         self._track_origins: dict[int, tuple[float, float]] = {}
 
@@ -99,15 +138,7 @@ class MultiObjectTracker:
         return tracked_objects
 
     def reset(self):
-        settings = get_settings()
-        self.tracker = DeepSort(
-           
-            max_age=settings.TRACKER_MAX_AGE,
-            n_init=settings.TRACKER_N_INIT,
-            max_iou_distance=0.7,
-            max_cosine_distance=0.3,
-            nn_budget=100,
-        )
+        self.tracker = _build_deepsort()
         self._frame_count = 0
         self._track_origins.clear()
 

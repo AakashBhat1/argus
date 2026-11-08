@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
@@ -13,6 +13,7 @@ from argus_vision.sources import SourceError, validate_camera_source
 from app.services.auth import get_current_active_user, require_admin
 from argus_common.net import MaskedCredentialsError, restore_masked_credentials
 from app.services.stream_manager import stream_manager
+from app.services import audit
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -54,6 +55,7 @@ async def get_camera(
 @router.post("/", response_model=CameraResponse, status_code=status.HTTP_201_CREATED)
 async def create_camera(
     data: CameraCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -63,6 +65,11 @@ async def create_camera(
     camera = Camera(**camera_data)
     db.add(camera)
     await db.flush()
+    # stream_url is redacted by the audit sanitiser (credentials never stored).
+    audit.record(
+        db, request, current_user, "camera.create", "camera", camera.id,
+        {"name": camera.name, "role": camera_data.get("role"), "stream_url": data.stream_url},
+    )
     await db.refresh(camera)
     return camera
 
@@ -71,6 +78,7 @@ async def create_camera(
 async def update_camera(
     camera_id: str,
     data: CameraUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -94,6 +102,14 @@ async def update_camera(
     for key, value in update_data.items():
         setattr(camera, key, value)
 
+    audit.record(
+        db, request, current_user, "camera.update", "camera", camera_id,
+        {
+            "name": camera.name,
+            "changed": sorted(update_data),
+            "stream_url": update_data.get("stream_url"),
+        },
+    )
     await db.flush()
     await db.refresh(camera)
 
@@ -105,6 +121,7 @@ async def update_camera(
 @router.delete("/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_camera(
     camera_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -124,5 +141,6 @@ async def delete_camera(
     await db.execute(delete(RoiEvent).where(RoiEvent.camera_id == camera_id))
     await db.execute(delete(AnalyticsSnapshot).where(AnalyticsSnapshot.camera_id == camera_id))
 
+    audit.record(db, request, current_user, "camera.delete", "camera", camera_id, {"name": camera.name})
     await db.delete(camera)
     await db.commit()

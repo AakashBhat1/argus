@@ -20,6 +20,7 @@ import {
 import { api, CAMERA_ROLES, GATE_ROLES, cameraService, rolesForService, type Camera as CameraType, type CameraRole, type StreamStatus } from "@/lib/api";
 import { cn, statusColor } from "@/lib/utils";
 import ZoneEditor from "@/components/ZoneEditor";
+import { useIsAdmin } from "@/lib/hooks";
 
 interface VideoFile {
   filename: string;
@@ -31,6 +32,8 @@ interface VideoFile {
 export default function CamerasPage() {
   const [cameras, setCameras] = useState<CameraType[]>([]);
   const [showAdd, setShowAdd] = useState(false);
+  // Camera and zone changes are admin-only on the server; operators only view.
+  const isAdmin = useIsAdmin();
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<{
     name: string;
@@ -197,16 +200,18 @@ export default function CamerasPage() {
           <h1 className="page-title"><span className="gradient-text-static">Cameras</span></h1>
           <p className="page-subtitle">Manage surveillance cameras and streams</p>
         </div>
-        <button
-          onClick={() => setShowAdd(!showAdd)}
-          className="btn-primary"
-        >
-          {showAdd ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-          {showAdd ? "Cancel" : "Add Camera"}
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowAdd(!showAdd)}
+            className="btn-primary"
+          >
+            {showAdd ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {showAdd ? "Cancel" : "Add Camera"}
+          </button>
+        )}
       </div>
 
-      {showAdd && (
+      {isAdmin && showAdd && (
         <form onSubmit={handleAdd} className="card space-y-4 animate-slide-up">
           <h3 className="text-sm font-semibold text-slate-200">New Camera</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -536,6 +541,8 @@ export default function CamerasPage() {
                 <div className="mt-4 flex items-center gap-2">
                   <button
                     onClick={() => handleToggleStream(cam, isRunning)}
+                    // Parking stream control is admin-only on the server.
+                    disabled={!isAdmin && cameraService(cam) === "parking"}
                     className={cn(
                       "flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-medium transition-all duration-200",
                       isRunning
@@ -554,6 +561,7 @@ export default function CamerasPage() {
                       </>
                     )}
                   </button>
+                  {isAdmin && (<>
                   <button
                     onClick={() => setZoneEditorCamera(cam)}
                     className="p-2.5 rounded-xl text-slate-600 hover:text-violet-400 hover:bg-violet-500/[0.06] transition-all duration-200"
@@ -569,6 +577,7 @@ export default function CamerasPage() {
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
+                  </>)}
                 </div>
               </div>
             );
@@ -588,7 +597,7 @@ export default function CamerasPage() {
         </div>
       )}
 
-      {zoneEditorCamera && (
+      {isAdmin && zoneEditorCamera && (
         <ZoneEditor
           cameraId={zoneEditorCamera.id}
           cameraName={zoneEditorCamera.name}

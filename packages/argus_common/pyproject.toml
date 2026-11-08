@@ -9,18 +9,18 @@ description = "Security and service-to-service primitives shared by Argus servic
 requires-python = ">=3.11"
 dependencies = [
   "cryptography>=44.0.0",
-  "pyjwt[crypto]==2.10.1",
-  "fastapi==0.109.2",
+  "pyjwt[crypto]==2.15.1",
+  "fastapi==0.162.2",
   "httpx==0.26.0",
-  "pydantic==2.6.1",
+  "pydantic==2.14.3",
   "pydantic-settings==2.1.0",
   "sqlalchemy==2.0.27",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.0.0,<9.0.0",
-  "pytest-asyncio==1.4.0",
+  "pytest>=9.0.3,<10.0.0",
+  "pytest-asyncio==1.4.1.post1",
   "aiosqlite==0.19.0",
 ]
 

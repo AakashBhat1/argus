@@ -24,6 +24,8 @@ from app.models import (
 )
 from app.services.ocr_service import normalize_plate_text
 from app.utils import utc_now
+from app.services import audit
+from argus_common.audit import AuditActor
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +146,7 @@ async def get_or_create_profile(
     profile_type: str = "normal",
     owner_name: str = "Visitor",
     notes: Optional[str] = None,
+    actor: Optional[AuditActor] = None,
 ) -> VehicleProfile:
     plate = normalize_plate_text(plate_text)
     result = await db.execute(
@@ -167,6 +170,12 @@ async def get_or_create_profile(
     )
     db.add(profile)
     await db.flush()
+    # A new plate is personal data under DPDP: record who caused it to exist.
+    audit.record(
+        db, None, actor or AuditActor.system(tenant_id, name="system:gate_ocr"),
+        "vehicle_profile.create", "vehicle_profile", profile.id,
+        {"plate": plate, "profile_type": profile_type},
+    )
     return profile
 
 
@@ -221,10 +230,12 @@ async def assign_space(
     db: AsyncSession,
     tenant_id: str,
     plate_text: str,
+    *,
+    actor: Optional[AuditActor] = None,
 ) -> Optional[dict[str, Any]]:
     """Assign first free space (VIP → ground floor preferred)."""
     plate = normalize_plate_text(plate_text)
-    profile = await get_or_create_profile(db, tenant_id, plate)
+    profile = await get_or_create_profile(db, tenant_id, plate, actor=actor)
     profile_type = profile.profile_type or "normal"
 
     if profile_type == "blacklist":

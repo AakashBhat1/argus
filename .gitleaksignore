@@ -1,0 +1,8 @@
+# One finding per line, by gitleaks fingerprint. Only false positives, each
+# with a reason. A real secret is rotated, never listed here.
+#
+# generic-api-key on the SigningKey dataclass field annotation in keys.py
+# (a field name and its type, Ed25519PrivateKey), not a key value.
+f0e4fd4ee5e225854714880c14bb53e86891cf05:packages/argus_common/argus_common/keys.py:generic-api-key:49
+# The first version of this file quoted that annotation in a comment.
+9833db7ecd4a49011aac39e8d0a9caf7b4a42d80:.gitleaksignore:generic-api-key:4

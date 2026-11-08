@@ -4,3 +4,10 @@
 *.conf text eol=lf
 mediamtx.yml text eol=lf
 docker-compose.yml text eol=lf
+# Nginx templates/snippets, compose/CI YAML and Dockerfiles are read inside
+# Linux containers or by Linux tooling: CRLF breaks nginx and bash.
+*.template text eol=lf
+*.snippet text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf

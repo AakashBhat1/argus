@@ -33,6 +33,8 @@
 # <SVC>_SANS to add the hostnames/IPs peers use to reach each machine.
 set -euo pipefail
 umask 077
+# Git Bash on Windows would rewrite openssl's -subj values into file paths.
+export MSYS2_ARG_CONV_EXCL="/CN=;/O="
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT="${ARGUS_PKI_OUT:-$ROOT/pki/out}"
@@ -82,15 +84,17 @@ issue_tls() {
   log "Issuing TLS certificate for $name ($sans)"
   openssl ecparam -name prime256v1 -genkey -noout -out "$dir/tls.key"
   openssl req -new -key "$dir/tls.key" -subj "/O=Argus/CN=$name" -out "$dir/tls.csr"
+  # A real file, not process substitution: native Windows openssl cannot read /proc/*/fd.
+  printf '%s\n' \
+    "basicConstraints=critical,CA:FALSE" \
+    "keyUsage=critical,digitalSignature,keyAgreement" \
+    "extendedKeyUsage=serverAuth,clientAuth" \
+    "subjectAltName=$sans" >"$dir/tls.ext"
   openssl x509 -req -in "$dir/tls.csr" -CA "$OUT/ca/ca.pem" -CAkey "$OUT/ca/ca.key" \
     -CAcreateserial -days "$DAYS_LEAF" -sha256 \
-    -extfile <(printf '%s\n' \
-      "basicConstraints=critical,CA:FALSE" \
-      "keyUsage=critical,digitalSignature,keyAgreement" \
-      "extendedKeyUsage=serverAuth,clientAuth" \
-      "subjectAltName=$sans") \
+    -extfile "$dir/tls.ext" \
     -out "$dir/tls.pem"
-  rm -f "$dir/tls.csr"
+  rm -f "$dir/tls.csr" "$dir/tls.ext"
   cp "$OUT/ca/ca.pem" "$dir/ca.pem"
 }
 

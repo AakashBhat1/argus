@@ -17,6 +17,7 @@ from app.services.authorization import authorization_registry
 from argus_vision.intent import IntentResult, classify_intent
 from app.services.intent_persistence import save_track_and_intent
 from app.services.risk_engine import RiskEngine, RiskEvent
+from app.services.zone_store import zone_store
 from argus_vision.tracker import MultiObjectTracker
 from argus_vision.trajectory import TrajectoryAccumulator
 from app.utils import utc_now
@@ -67,7 +68,10 @@ class IntrusionPipeline:
         self._tenant_id = tenant_id
         self._camera_role = camera_role
         self._tracker = MultiObjectTracker()
-        self._roi_filter = RoiIntrusionFilter(camera_id=self._camera_id)
+        self._roi_filter = RoiIntrusionFilter(
+            camera_id=self._camera_id,
+            zone_repository=zone_store.for_tenant(self._tenant_id),
+        )
         self._reporter = RoiEventReporter()
         self._trajectory = TrajectoryAccumulator(max_age_seconds=60.0)
         width, height = _parse_resolution(resolution)
