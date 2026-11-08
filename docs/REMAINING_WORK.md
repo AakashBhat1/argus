@@ -27,7 +27,7 @@ on Phase 4. Phase 7 is last.
 | F7 | Parking has a `calibration` column but its pipeline does no geometry, and there is no risk engine there. `CameraGeometry.locate` is only called from surveillance's `RiskEngine.evaluate`. | Step 5.7 adds it to parking separately. |
 | F8 | In the facial-recognition prototype, `recognize_multi_frame` takes the best score per frame **across all users**, then aggregates. Five frames can match five different people and still be "recognized". | Fixed in the port: aggregate per identity (step 6.6). |
 | F9 | Zones were not tenant-scoped. | Fixed in PR #4: `roi_zones` table, tenant-filtered API and runtime. |
-| F10 | The repo's `LICENSE` file is effectively empty (5 bytes of whitespace), and there is no `NOTICE`. | Step 7.4. Decide the licence before distributing anything: YOLO weights are AGPL-3.0. |
+| F10 | The repo's `LICENSE` file was empty, and there is no `NOTICE`. | `LICENSE` is now AGPL-3.0 (D5). `NOTICE` and the source link remain in step 7.4. |
 
 ## 0.1 Owner decisions (2026-11-08)
 
@@ -39,8 +39,7 @@ Argus is an early-stage development project and is not being sold.
 | D2 | Watchlist matching is **on** by default and can be switched off. | `FACE_WATCHLIST_ENABLED=true`, with a global off switch (6.9). "Possible match — verify, never automatic action" still holds. |
 | D3 | Keep face at the gate; if it cannot run, a guard decides. FASTag may be added later, and the face step must be replaceable. | A pluggable `GateSecondFactor` (6.11). Private buildings use face; a FASTag reader can be added for public lots without touching the decision logic. |
 | D4 | Non-commercial for now. | InsightFace weights are acceptable. `FACE_ACK_NONCOMMERCIAL_WEIGHTS=true` goes in the development settings; the check stays so it cannot be forgotten if the project is ever sold. |
-
-**Still open.** Q5: the licence for Argus (`LICENSE` is blank and the repository is public). Nothing is blocked until it is distributed.
+| D5 | Argus is licensed under **AGPL-3.0**. | `LICENSE` holds the full text. Anyone running a modified Argus for other users must offer them its source (step 7.4). |
 
 **Limit on D2.** Not selling the project does not by itself take it outside the DPDP Act; the Act exempts purely personal or domestic use. During development, enroll only people who have agreed to it (`consenting_test_subject`, 6.3), and take legal advice before pointing a watchlist at the general public.
 
@@ -621,7 +620,7 @@ Architecture: service diagram, data ownership per database, event catalogue (fro
 Role of Data Fiduciary; data inventory (video, plates, faces, logs, audit); purpose and lawful basis per processing (s.4, s.6, s.7); notice template (s.5); consent lifecycle and withdrawal; rights (s.11–13) and how each is executed; children (s.9); retention table; breach response (s.8(6)); processors. Note that the Act has no separate "sensitive data" class, but treat biometrics as the highest tier anyway. Mark clearly that counsel must review it. **Acceptance:** every retention value matches a setting.
 
 ### 7.4 `NOTICE` and licence
-Add `NOTICE`: InsightFace (code MIT; **pretrained models non-commercial**), Ultralytics YOLO (**AGPL-3.0**: weights and any derived model; distribution or network service obligations, or an Ultralytics enterprise licence), MiDaS (MIT), deep-sort-realtime, OpenVINO (Apache-2.0), MediaMTX (MIT). Verify each licence at the pinned version when writing it. Fill in `LICENSE` once the licence question (§0.1) is settled, and note that AGPL may constrain the choice. **Acceptance:** no model file ships without its notice.
+Add `NOTICE`: InsightFace (code MIT; **pretrained models non-commercial**), Ultralytics YOLO (**AGPL-3.0**: weights and any derived model; distribution or network service obligations, or an Ultralytics enterprise licence), MiDaS (MIT), deep-sort-realtime, OpenVINO (Apache-2.0), MediaMTX (MIT). Verify each licence at the pinned version when writing it. `LICENSE` is AGPL-3.0 (D5). The code licence does not cover model weights: `NOTICE` must say that InsightFace's non-commercial terms still apply to anyone using those weights. To meet AGPL section 13, add a "Source code" link in the dashboard (the `Sidebar.tsx` footer) pointing at the repository. **Acceptance:** no model file ships without its notice, and the link is visible to every signed-in user.
 
 ### 7.5 Sibling repo cleanup
 Done in each repo, on its own branch, with its own PR. **Never through the argus repo.**
@@ -709,4 +708,4 @@ Baselines after Phase 4: argus_common 99 (2 chmod tests fail on Windows only), s
 | `deploy/pki.sh`, `deploy/check.sh`, `docker-compose.yml`, `.github/workflows/ci.yml`, `.github/dependabot.yml` | 6.1, 6.2 |
 | `services/surveillance/app/{mesh.py,models.py,services/event_handlers.py}` | 6.10 |
 | `services/parking/app/{mesh.py,services/gate_ocr.py,services/events.py}` | 6.11, 6.12 |
-| `SECURITY.md`, `docs/threat-model.md`, `README.md`, `LICENSE` | 6.14, 7.1, 7.4 |
+| `SECURITY.md`, `docs/threat-model.md`, `README.md`, `frontend/src/components/Sidebar.tsx` | 6.14, 7.1, 7.4 |
