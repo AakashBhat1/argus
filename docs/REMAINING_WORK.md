@@ -1,6 +1,8 @@
 # Argus: remaining work (Phases 5–7)
 
 Status: 2026-11-08. Written after Phase 4 (PR #4). This is a plan: none of it is implemented.
+
+**There is no live host any more** (the EC2 instance is shut down). Everything below is built and verified on the local machine; the deployment steps describe what a future host would need.
 It was written from the code, and every existing file, function and setting
 named here was checked against it. New names are proposals.
 
@@ -24,7 +26,7 @@ on Phase 4. Phase 7 is last.
 | F6 | `IdentityProvider.identify()` is **synchronous** and runs inside `AuthorizationRegistry.resolve()`, inside the frame loop. The face service is remote. | Step 6.10 uses a local cache fed asynchronously. Never call the network from `identify()`. |
 | F7 | Parking has a `calibration` column but its pipeline does no geometry, and there is no risk engine there. `CameraGeometry.locate` is only called from surveillance's `RiskEngine.evaluate`. | Step 5.7 adds it to parking separately. |
 | F8 | In the facial-recognition prototype, `recognize_multi_frame` takes the best score per frame **across all users**, then aggregates. Five frames can match five different people and still be "recognized". | Fixed in the port: aggregate per identity (step 6.6). |
-| F9 | Zones are not tenant-scoped (one global JSON file). | Correction C2, and a blocker for any second tenant. |
+| F9 | Zones were not tenant-scoped. | Fixed in PR #4: `roi_zones` table, tenant-filtered API and runtime. |
 | F10 | The repo's `LICENSE` file is effectively empty (5 bytes of whitespace), and there is no `NOTICE`. | Step 7.4. Decide the licence before distributing anything: YOLO weights are AGPL-3.0. |
 
 ## 0.1 Questions only the owner can answer
@@ -586,7 +588,6 @@ All jobs green on `main`, including Trivy made blocking (C4). Tag `v1.0.0` only 
 | # | Item | Why it was not done | Plan | Acceptance |
 |---|---|---|---|---|
 | C1 (4.7) | Surveillance schema comes from `init_db` `create_all`; the Alembic baseline is stamp-only | A full baseline against live data needs care and its own PR | New squashed baseline for empty databases; existing databases stamped at head; drop `_ensure_columns` and `create_all` outside tests | A fresh database built by Alembic matches the models (`alembic check`) |
-| C2 | **Zones are not tenant-scoped**, and live in a JSON file, so their audit row cannot share a transaction (threat model R1, R9) | Found late; it is a data-model change | `zones` table with `tenant_id`, import of the JSON, `RoiFilter` loads from DB through a cache, all routes filtered | Tenant A cannot see or change tenant B's zones (test) |
 | C3 (4.4) | CSP allows `'unsafe-inline'` scripts | Needs Next.js middleware and removing static prerendering for dashboard routes | Nonce per request in `middleware.ts`; drop `'unsafe-inline'` from `script-src`; keep it for `style-src` at first | No CSP violations in a browser walk-through |
 | C4 | Trivy is report-only | Baseline not reviewed; 2 HIGH in setuptools' vendored `jaraco.context` on the Python images | Review; after C5, set `exit-code: 1` and remove `continue-on-error` | A known-vulnerable base fails the job |
 | C5 | setuptools pinned at 80.9.0, with two ignored advisories | `deep-sort-realtime` imports `pkg_resources`, removed from setuptools ≥ 81 (and 83.0.0 / 84.1.0 hold the fixes) | Replace the `pkg_resources` use: vendor the small tracker module or find a maintained fork | `--ignore-vuln` entries removed from `ci.yml` |
@@ -594,19 +595,16 @@ All jobs green on `main`, including Trivy made blocking (C4). Tag `v1.0.0` only 
 | C7 (1.3) | `passlib` is unmaintained (no advisory today) | Not a finding | Move to `bcrypt` directly or `argon2-cffi`; verify old hashes, rehash on next login | Existing users sign in; hashes upgrade |
 | C8 | `starlette.testclient` with `httpx` is deprecated in Starlette 1.x (warning in test runs) | Warning only | Move to the recommended client when bumping httpx | No deprecation warning |
 | C9 (1.1) | ruff runs `F` only | Spec: later | Widen to `E,W,B,S`, fixing or `# noqa`ing each with a reason | Gate green with wider rules |
-| C10 | Browser end-to-end from `PHASE4_REMAINING.md` §5.5 | Needs a deployed stack | Playwright against `docker compose`: sign in, refresh, WS reconnect, cross-origin refused, logout, playback owner vs other, audit 403 for operators | Runs in CI on a schedule |
-| C11 | `npm test` finds 0 tests on Windows (cmd keeps the quotes round the glob) and still exits 0 | Linux CI is unaffected | Use a small runner script or unquoted double-star handling | The count is the same on both OSes |
+| C10 | Browser end-to-end from `PHASE4_REMAINING.md` §5.5 | Not yet written | Playwright against a local `docker compose` stack: sign in, refresh, WS reconnect, cross-origin refused, logout, playback owner vs other, audit 403 for operators | Passes locally, then on a CI schedule |
 | C12 | Grants are in-memory: lost on restart, not shared between workers | Existing design (the registry docstring says so) | Move to the database or Redis before running more than one worker | Grant survives a restart |
 | C13 | gitleaks image digest is not bumped by Dependabot | It runs in a shell step, not as an action | Check quarterly, or adopt a pinned action | Documented owner |
 | C14 | CodeQL "note"-level findings (12) not triaged | Not gating | Triage in one pass | Zero untriaged |
-
-**Owner action, still open:** check the live EC2 host for the placeholder MediaMTX passwords (`docs/upgrading.md`, first section). A `200` means rotate immediately.
 
 ## Definition of done (whole project)
 
 1. Every step's acceptance criteria above are met, or moved here with a reason.
 2. All suites pass; Alembic round-trips for all services; `deploy/check.sh` passes; every CI job is green on `main`, with Trivy blocking.
-3. C1–C3 are closed before a second tenant, and before any public launch.
+3. C1 and C3 are closed before any public launch.
 4. Face: no public route, no plaintext template path, every identify audited, consent and erasure proven end to end, no automatic action from any watchlist hit.
 5. No runtime model downloads anywhere. Every model is SHA-pinned and listed in `NOTICE`.
 6. `docs/privacy-dpdp.md` reviewed by counsel; `SECURITY.md` key table complete.
@@ -623,10 +621,10 @@ ARGUS_ENV_FILE= DEBUG=true DATABASE_URL=sqlite+aiosqlite:///./alembic-check.db a
 cd frontend && npm run lint -- --max-warnings=0 && npm run typecheck && npm test && npm run build
 ruff check --select F packages services scripts
 shellcheck deploy/*.sh scripts/generate-secrets.sh scripts/setup-tls.sh
-deploy/check.sh    # Linux or CI only: fails under Windows Git Bash
+deploy/check.sh    # needs Docker Desktop running
 ```
 
-Baselines after Phase 4: argus_common 99 (2 chmod tests fail on Windows only), surveillance 223, parking 111, frontend 11.
+Baselines after Phase 4: argus_common 99 (2 chmod tests fail on Windows only), surveillance 230, parking 111, frontend 11.
 
 ## File map
 
