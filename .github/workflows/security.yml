@@ -30,7 +30,8 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/repo" \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-            "$GITLEAKS_IMAGE" git --config /repo/.gitleaks.toml --redact --no-banner --verbose /repo
+            "$GITLEAKS_IMAGE" git --config /repo/.gitleaks.toml --gitleaks-ignore-path /repo/.gitleaksignore \
+            --redact --no-banner --verbose /repo
 
   codeql:
     name: CodeQL (${{ matrix.language }})
