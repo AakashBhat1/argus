@@ -23,6 +23,8 @@ dependencies = [
   "websockets==12.0",
   "httpx==0.26.0",
   "python-dotenv==1.0.1",
+  # IANA zone data for zoneinfo where the OS has none (Windows, minimal images).
+  "tzdata==2026.6",
   # deep-sort's default appearance embedder
   "torch==2.5.1",
   "torchvision==0.20.1",
