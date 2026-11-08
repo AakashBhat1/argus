@@ -24,7 +24,7 @@
     "postcss": "^8.5.32"
   },
   "devDependencies": {
-    "@types/node": "^20.11.16",
+    "@types/node": "^26.6.6",
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "autoprefixer": "^10.4.17",
