@@ -43,6 +43,8 @@ networks:
 
 services:
   parking-db:
+    mem_limit: ${PARKING_DB_MEM_LIMIT:-1g}
+    pids_limit: 256
     <<: *hardening
     image: postgres:15-alpine@sha256:aae6554de426ae1990f1a939ff183a0299146cf7142a6f4c379c3357af9cc2d8
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
@@ -59,6 +61,8 @@ services:
       retries: 10
 
   parking:
+    mem_limit: ${PARKING_MEM_LIMIT:-3g}
+    pids_limit: 1024
     <<: *hardening
     build:
       context: ../..
@@ -103,6 +107,8 @@ services:
       retries: 3
 
   parking-mediamtx:
+    mem_limit: ${MEDIAMTX_MEM_LIMIT:-512m}
+    pids_limit: 256
     <<: *hardening
     image: bluenviron/mediamtx:1.21.1@sha256:5ce2a948eb68df06ce2e13870db8df8e30d516ac4dc40e04bfe8aee3bdf7be40
     environment:
@@ -111,6 +117,8 @@ services:
       MTX_AUTHINTERNALUSERS_2_PASS: ${MEDIAMTX_READ_PASSWORD}
       MTX_AUTHINTERNALUSERS_3_PASS: ${MEDIAMTX_VIEWER_PASSWORD:?set MEDIAMTX_VIEWER_PASSWORD (scripts/generate-secrets.sh)}
       MTX_WEBRTCADDITIONALHOSTS: ${MEDIAMTX_PUBLIC_HOST:-127.0.0.1}
+      # Browsers reach WHEP only through the gateway (same origin); nothing else may.
+      MTX_WEBRTCALLOWORIGINS: https://${PUBLIC_SERVER_NAME:-localhost}
     volumes: [../../mediamtx.yml:/mediamtx.yml:ro]
     ports:
       - "8554:8554"          # RTSP ingest from gate/lot camera relays
@@ -118,6 +126,8 @@ services:
     networks: [backplane]
 
   ollama:
+    mem_limit: ${OLLAMA_MEM_LIMIT:-8g}
+    pids_limit: 512
     <<: *hardening
     image: ollama/ollama:0.3.14@sha256:e1ce9edb7ccd60ef8b4d99fffe7afdc67edfd1f4d7c6028a4253e6efa82f7e60
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
@@ -125,6 +135,8 @@ services:
     networks: [backplane]
 
   ollama-model:
+    mem_limit: ${OLLAMA_MODEL_MEM_LIMIT:-256m}
+    pids_limit: 64
     <<: *hardening
     image: ollama/ollama:0.3.14@sha256:e1ce9edb7ccd60ef8b4d99fffe7afdc67edfd1f4d7c6028a4253e6efa82f7e60
     restart: "on-failure:5"
@@ -136,6 +148,8 @@ services:
     depends_on: [ollama]
 
   parking-edge:
+    mem_limit: ${EDGE_MEM_LIMIT:-256m}
+    pids_limit: 128
     <<: *hardening
     image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     # DAC_READ_SEARCH: the root master must read the mounted keys, which are
