@@ -144,7 +144,7 @@ services:
     mem_limit: ${MEDIAMTX_MEM_LIMIT:-512m}
     pids_limit: 256
     <<: *hardening
-    image: bluenviron/mediamtx:1.21.1@sha256:5ce2a948eb68df06ce2e13870db8df8e30d516ac4dc40e04bfe8aee3bdf7be40
+    image: bluenviron/mediamtx:1.21.3@sha256:59e43552f3be43695b70c19424dc2a42fcec18075f88d91561a24ac5d70a586c
     environment:
       MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_API_PASSWORD}
       MTX_AUTHINTERNALUSERS_1_PASS: ${MEDIAMTX_PUBLISH_PASSWORD:?set MEDIAMTX_PUBLISH_PASSWORD}
@@ -165,7 +165,7 @@ services:
     mem_limit: ${EDGE_MEM_LIMIT:-256m}
     pids_limit: 128
     <<: *hardening
-    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    image: nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
     # DAC_READ_SEARCH: the root master must read the mounted keys, which are
     # owned by the services' uid (deploy/pki.sh). Workers run as nginx and
     # lose all capabilities when they switch uid.
