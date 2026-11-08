@@ -38,13 +38,13 @@ async def receive_event(
     try:
         envelope = EventEnvelope.from_dict(await request.json())
     except (EventError, ValueError) as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     # A peer may only speak for itself, and only publish what it owns.
     if envelope.source != principal.service:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "event source does not match caller")
     if envelope.type not in ACCEPTED_EVENTS.get(principal.service, set()):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "event type not accepted from this peer")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "event type not accepted from this peer")
 
     broadcasts: list[dict] = []
     async with database.get_session_factory()() as session:
