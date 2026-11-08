@@ -202,6 +202,7 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
         channel,
         tenant_id=tenant_id,
         subprotocol=auth.subprotocol,
+        user_id=auth.user.id,
     ):
         return
     try:

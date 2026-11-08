@@ -28,16 +28,30 @@ TRY_AGAIN_LATER = 1013
 
 
 class WebSocketHub:
-    def __init__(self, send_timeout: float = 2.0, max_connections_per_tenant: int = 200) -> None:
+    def __init__(
+        self,
+        send_timeout: float = 2.0,
+        max_connections_per_tenant: int = 200,
+        max_connections_per_user: int = 20,
+    ) -> None:
         self.send_timeout = send_timeout
         self.max_connections_per_tenant = max_connections_per_tenant
+        # One account must not exhaust its tenant's budget (a leaked session
+        # or a runaway tab loop): each user gets a share of it.
+        self.max_connections_per_user = max_connections_per_user
         # tenant_id -> channel -> sockets
         self._sockets: dict[str, dict[str, set[WebSocket]]] = {}
+        # socket -> (tenant_id, user_id), for sockets opened by a known user
+        self._owners: dict[WebSocket, tuple[str, str]] = {}
+        self._user_counts: dict[tuple[str, str], int] = {}
 
     # -- membership ---------------------------------------------------------
 
     def tenant_connection_count(self, tenant_id: str) -> int:
         return sum(len(sockets) for sockets in self._sockets.get(tenant_id, {}).values())
+
+    def user_connection_count(self, tenant_id: str, user_id: str) -> int:
+        return self._user_counts.get((tenant_id, user_id), 0)
 
     @property
     def connection_count(self) -> int:
@@ -49,14 +63,23 @@ class WebSocketHub:
         channel: str = GLOBAL_CHANNEL,
         tenant_id: str = "1",
         subprotocol: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
-        """Accept and register the socket; refuse it when the tenant is full."""
+        """Accept and register the socket; refuse it when the tenant or user is full."""
         if self.tenant_connection_count(tenant_id) >= self.max_connections_per_tenant:
             logger.warning("WebSocket refused: tenant %s has %d connections", tenant_id, self.max_connections_per_tenant)
             await websocket.close(code=TRY_AGAIN_LATER)
             return False
+        owner = (tenant_id, str(user_id)) if user_id is not None else None
+        if owner is not None and self._user_counts.get(owner, 0) >= self.max_connections_per_user:
+            logger.warning("WebSocket refused: a user of tenant %s has %d connections", tenant_id, self.max_connections_per_user)
+            await websocket.close(code=TRY_AGAIN_LATER)
+            return False
         await websocket.accept(subprotocol=subprotocol)
         self._sockets.setdefault(tenant_id, {}).setdefault(channel, set()).add(websocket)
+        if owner is not None and websocket not in self._owners:
+            self._owners[websocket] = owner
+            self._user_counts[owner] = self._user_counts.get(owner, 0) + 1
         logger.info("WebSocket connected: tenant_id=%s channel=%s", tenant_id, channel)
         return True
 
@@ -64,6 +87,13 @@ class WebSocketHub:
         self._remove(tenant_id, channel, websocket)
 
     def _remove(self, tenant_id: str, channel: str, websocket: WebSocket) -> None:
+        owner = self._owners.pop(websocket, None)
+        if owner is not None:
+            remaining = self._user_counts.get(owner, 1) - 1
+            if remaining > 0:
+                self._user_counts[owner] = remaining
+            else:
+                self._user_counts.pop(owner, None)
         channels = self._sockets.get(tenant_id)
         if not channels:
             return
