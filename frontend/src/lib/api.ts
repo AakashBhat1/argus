@@ -28,7 +28,7 @@ async function authorizedFetch(url: string, init?: RequestInit): Promise<Respons
   });
 }
 
-async function fetchApi<T>(endpoint: string, options?: RequestInit, behaviour?: FetchBehaviour): Promise<T> {
+export async function fetchApi<T>(endpoint: string, options?: RequestInit, behaviour?: FetchBehaviour): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options?.headers as Record<string, string> || {}),
@@ -504,6 +504,10 @@ export interface ParkingChatResponse {
   executed: boolean;
   result?: Record<string, any> | null;
   error?: string | null;
+  /** A validated action that runs only after chatConfirm(proposal_id). */
+  requires_confirmation?: boolean;
+  proposal_id?: string | null;
+  expires_at?: string | null;
 }
 
 export interface FeedMessage {
@@ -703,6 +707,11 @@ export const api = {
       fetchApi<ParkingChatResponse>("/parking/chat/command", {
         method: "POST",
         body: JSON.stringify({ message }),
+      }),
+    chatConfirm: (proposalId: string) =>
+      fetchApi<ParkingChatResponse>("/parking/chat/confirm", {
+        method: "POST",
+        body: JSON.stringify({ proposal_id: proposalId }),
       }),
     slots: (cameraId: string) =>
       fetchApi<{ space_id: string; polygon: number[][] }[]>(`/parking/cameras/${cameraId}/slots`),

@@ -19,9 +19,19 @@ import {
   Car,
   MessageSquare,
   ShieldAlert,
+  ScrollText,
 } from "lucide-react";
+import { useIsAdmin } from "@/lib/hooks";
 
-const navSections = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: typeof Eye;
+  /** Shown to admins only (the API refuses operators anyway). */
+  adminOnly?: boolean;
+}
+
+const navSections: { label: string; items: NavItem[] }[] = [
   {
     label: "Overview",
     items: [
@@ -49,6 +59,7 @@ const navSections = [
     items: [
       { href: "/performance", label: "Performance", icon: Activity },
       { href: "/live-metrics", label: "Inference", icon: Cpu },
+      { href: "/audit", label: "Audit log", icon: ScrollText, adminOnly: true },
     ],
   },
 ];
@@ -57,6 +68,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const isAdmin = useIsAdmin();
 
   async function handleLogout() {
     await signOut();
@@ -92,7 +104,7 @@ export default function Sidebar() {
               {section.label}
             </p>
             <div className="space-y-0.5">
-              {section.items.map((item) => {
+              {section.items.filter((item) => isAdmin || !item.adminOnly).map((item) => {
                 const Icon = item.icon;
                 const isActive = pathname === item.href;
                 return (

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Shield, Sparkles, User, CheckCircle, AlertTriangle } from "lucide-react";
 import { api, type ParkingChatResponse } from "@/lib/api";
+import ProposalActions, { type ProposalState } from "./ProposalActions";
 
 export interface ChatMessage {
   id: string;
@@ -13,6 +14,8 @@ export interface ChatMessage {
   executed?: boolean;
   error?: string | null;
   commandDetail?: Record<string, any> | null;
+  proposalId?: string;
+  proposalState?: ProposalState;
 }
 
 interface ParkBotChatProps {
@@ -78,6 +81,8 @@ export default function ParkBotChat({ isAdmin, onCommandExecuted, addLog }: Park
         executed: response.executed,
         error: response.error,
         commandDetail: response.command,
+        proposalId: response.requires_confirmation && response.proposal_id ? response.proposal_id : undefined,
+        proposalState: response.requires_confirmation ? "pending" : undefined,
       };
 
       setChatMessages((prev) => [...prev, botMsg]);
@@ -96,6 +101,36 @@ export default function ParkBotChat({ isAdmin, onCommandExecuted, addLog }: Park
       setChatMessages((prev) => [...prev, errorMsg]);
     } finally {
       setChatLoading(false);
+    }
+  };
+
+  const setProposalState = (msgId: string, proposalState: ProposalState) =>
+    setChatMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, proposalState } : m)));
+
+  const handleConfirm = async (msg: ChatMessage) => {
+    if (!msg.proposalId) return;
+    setProposalState(msg.id, "confirming");
+    try {
+      const response = await api.parking.chatConfirm(msg.proposalId);
+      setProposalState(msg.id, "confirmed");
+      const resultMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        sender: "bot",
+        text: response.content,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        isCommand: true,
+        executed: response.executed,
+        error: response.result && response.result.ok === false ? String(response.result.error ?? "Not done") : null,
+        commandDetail: response.command,
+      };
+      setChatMessages((prev) => [...prev, resultMsg]);
+      if (response.executed && response.command) {
+        onCommandExecuted(response.command);
+        addLog("success", `ParkBot ran ${response.command.action} after confirmation`);
+      }
+    } catch (err) {
+      console.error("ParkBot confirmation failed:", err);
+      setProposalState(msg.id, "failed");
     }
   };
 
@@ -170,10 +205,10 @@ export default function ParkBotChat({ isAdmin, onCommandExecuted, addLog }: Park
                   <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
 
                   {/* If bot response executed a command successfully */}
-                  {isBot && msg.executed && msg.commandDetail && (
+                  {isBot && (msg.executed || msg.proposalState) && msg.commandDetail && (
                     <div className="mt-2.5 pt-2.5 border-t border-slate-700/40 space-y-1.5">
                       <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" /> Command Executed
+                        <CheckCircle className="w-3 h-3" /> {msg.executed ? "Command Executed" : "Proposed Action"}
                       </span>
                       <div className="bg-slate-950/60 rounded-lg p-2 font-mono text-[9px] text-slate-400 border border-slate-800/40">
                         <span className="text-slate-500">Action:</span> {msg.commandDetail.action}
@@ -196,6 +231,14 @@ export default function ParkBotChat({ isAdmin, onCommandExecuted, addLog }: Park
                       </span>
                       <p className="text-[10px] text-slate-400 italic">{msg.error}</p>
                     </div>
+                  )}
+
+                  {isBot && msg.proposalState && (
+                    <ProposalActions
+                      state={msg.proposalState}
+                      onConfirm={() => handleConfirm(msg)}
+                      onCancel={() => setProposalState(msg.id, "cancelled")}
+                    />
                   )}
                 </div>
                 <p className={`text-[9px] text-slate-500 font-mono ${isBot ? "text-left" : "text-right"}`}>

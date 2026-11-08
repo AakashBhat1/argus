@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
+import { SESSION_CHANGED_EVENT, isAdminSession } from "./auth";
 
 /**
  * Run `task(false)` once, then `task(true)` every `intervalMs` ("background"
@@ -22,4 +23,18 @@ const noopSubscribe = () => () => {};
 /** False during SSR and hydration, true afterwards (no setState-in-effect). */
 export function useMounted(): boolean {
   return useSyncExternalStore(noopSubscribe, () => true, () => false);
+}
+
+function subscribeSession(onChange: () => void): () => void {
+  window.addEventListener(SESSION_CHANGED_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(SESSION_CHANGED_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+/** True when the signed-in user is an admin (a UI hint; the server decides). */
+export function useIsAdmin(): boolean {
+  return useSyncExternalStore(subscribeSession, isAdminSession, () => false);
 }

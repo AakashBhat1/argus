@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useMounted, usePolling } from "@/lib/hooks";
+import { useIsAdmin, useMounted, usePolling } from "@/lib/hooks";
 import {
   api,
   type ParkingSpace,
@@ -34,6 +34,7 @@ interface ToastMessage {
 
 export default function ParkingDashboardPage() {
   const mounted = useMounted(); // the 3D view renders client-side only
+  const isAdmin = useIsAdmin(); // bay release is admin-only on the server
   const [spaces, setSpaces] = useState<ParkingSpace[]>([]);
   const [stats, setStats] = useState<ParkingStats | null>(null);
   const [activities, setActivities] = useState<ParkingActivity[]>([]);
@@ -149,6 +150,10 @@ export default function ParkingDashboardPage() {
 
   const handleOpenCheckout = (space: ParkingSpace) => {
     if (!space.is_occupied) return;
+    if (!isAdmin) {
+      addToast("info", "View only", "Checking a vehicle out requires an administrator.");
+      return;
+    }
     setSelectedSpace(space);
     setCheckoutResult(null);
     setShowCheckoutModal(true);

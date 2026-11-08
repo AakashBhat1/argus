@@ -11,6 +11,14 @@
 const SESSION_KEY = "argus_session";
 // Bearer token stored by dashboards before cookie sessions; never kept.
 const LEGACY_TOKEN_KEY = "argus_token";
+/** Dispatched on window when this tab signs in or out (other tabs get "storage"). */
+export const SESSION_CHANGED_EVENT = "argus-session-changed";
+
+function announce(): void {
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new Event(SESSION_CHANGED_EVENT));
+  }
+}
 
 export interface SessionHint {
   username: string;
@@ -31,6 +39,7 @@ export function setSession(hint: SessionHint): void {
   const store = storage();
   store?.removeItem(LEGACY_TOKEN_KEY);
   store?.setItem(SESSION_KEY, JSON.stringify(hint));
+  announce();
 }
 
 export function getSession(): SessionHint | null {
@@ -52,6 +61,13 @@ export function clearSession(): void {
   const store = storage();
   store?.removeItem(SESSION_KEY);
   store?.removeItem(LEGACY_TOKEN_KEY);
+  announce();
 }
 
 export const isAuthenticated = (): boolean => getSession() !== null;
+
+/**
+ * UI hint only: hides controls an operator would get a 403 for. The server
+ * enforces the role on every request regardless.
+ */
+export const isAdminSession = (): boolean => getSession()?.role === "admin";
