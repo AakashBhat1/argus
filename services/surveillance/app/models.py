@@ -260,6 +260,25 @@ class InboxEvent(InboxEventMixin, Base):
     pass
 
 
+class RoiZoneRecord(Base):
+    """One ROI zone, owned by one tenant (points are normalized to 0..1)."""
+
+    __tablename__ = "roi_zones"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String(36), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    points = Column(JSON, nullable=False)
+    threshold_sec = Column(Float, nullable=False, default=5.0)
+    color = Column(JSON, nullable=False, default=lambda: [0, 255, 255])
+    camera_ids = Column(JSON, nullable=True)  # None: every camera of the tenant
+    zone_type = Column(String(20), nullable=False, default="restricted")
+    armed_schedule = Column(JSON, nullable=False, default=lambda: {"mode": "always"})
+    allowed_classes = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+
 class AuditEvent(AuditEventMixin, Base):
     """Who changed what (see argus_common.audit)."""
 

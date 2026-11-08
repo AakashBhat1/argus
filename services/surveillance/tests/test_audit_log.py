@@ -28,9 +28,8 @@ SECRET_URL = "rtsp://admin:S3cret!@203.0.113.40:554/Streaming/Channels/101"
 
 
 @pytest.fixture(autouse=True)
-def _fresh_limiter_and_zone_file(tmp_path, monkeypatch):
+def _fresh_limiter(monkeypatch):
     monkeypatch.setattr(auth_router, "login_attempt_limiter", LoginAttemptLimiter())
-    monkeypatch.setattr(get_settings(), "ROI_ZONES_CONFIG_PATH", str(tmp_path / "zones.json"))
 
 
 @pytest_asyncio.fixture()

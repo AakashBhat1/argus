@@ -200,6 +200,8 @@ class Settings(VisionSettings, ServiceMeshSettings):
 
     # -- Data Retention -------------------------------------------------------
     RETENTION_ENABLED: bool = True
+    # How quickly a zone change made by another worker reaches this one.
+    ZONE_REFRESH_SECONDS: int = Field(default=5, ge=1)
     RETENTION_DAYS: int = 30
     # Admin audit log rows are kept longer than telemetry (DPDP accountability).
     AUDIT_RETENTION_DAYS: int = Field(default=365, ge=1)

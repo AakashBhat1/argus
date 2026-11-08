@@ -24,6 +24,7 @@ from app.services.stream_manager import stream_manager
 from app.services.websocket_manager import ws_manager
 from app.services.outbox import outbox_runner
 from app.services.retention import retention_worker
+from app.services.zone_store import zone_refresh_worker, zone_store
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
     await seal_stored_stream_urls(get_session_factory())
+    await zone_store.load_all()
 
     # Initialize the inference worker pool
     inference_pool = InferenceWorkerPool(
@@ -86,6 +88,7 @@ async def lifespan(app: FastAPI):
 
     # Start data retention worker
     retention_task = asyncio.create_task(retention_worker())
+    zone_refresh_task = asyncio.create_task(zone_refresh_worker())
 
     # Deliver queued events to peer services (parking).
     outbox_runner.start()
@@ -96,6 +99,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down, stopping all streams...")
     await outbox_runner.stop()
     retention_task.cancel()
+    zone_refresh_task.cancel()
     await stream_manager.stop_all()
     await inference_pool.shutdown()
     detector.shutdown()

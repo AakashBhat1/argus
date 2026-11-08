@@ -1,50 +1,22 @@
-"""CRUD endpoints for ROI zone management."""
+"""CRUD endpoints for ROI zones. Every zone belongs to one tenant."""
 
-import json
-from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
-
-from app.config import get_settings
-from argus_vision.roi import ZONE_TYPES, ArmedSchedule
-from app.models import User
-from app.services.auth import get_current_active_user, require_admin
-from app.database import get_db
-from app.services import audit
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Zones live in a JSON file, not the database. Each change stages its audit
-# row, writes the file, then get_db commits: a failed write leaves no row;
-# only a database failure after the write can leave a change unaudited.
+from app.database import get_db
+from app.models import Camera, RoiZoneRecord, User
+from app.services import audit
+from app.services.auth import get_current_active_user, require_admin
+from app.services.zone_store import record_to_dict, zone_store
+from argus_vision.roi import ZONE_TYPES, ArmedSchedule
 
 router = APIRouter(prefix="/zones", tags=["zones"])
 
 ZoneType = Literal["restricted", "perimeter", "entrance", "driveway", "parking", "public"]
-
-
-def _zones_config_path() -> Path:
-    settings = get_settings()
-    return settings.resolve_path(settings.ROI_ZONES_CONFIG_PATH)
-
-
-def _load_zones() -> list[dict]:
-    path = _zones_config_path()
-    if not path.exists():
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    if isinstance(data, dict):
-        return data.get("zones", [])
-    return data
-
-
-def _save_zones(zones: list[dict]) -> None:
-    path = _zones_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(zones, f, indent=2)
 
 
 class ZonePoint(BaseModel):
@@ -128,36 +100,66 @@ def _to_response(z: dict) -> ZoneResponse:
     )
 
 
-def _serialize(zone_id: int, data: ZoneCreate, existing: Optional[dict] = None) -> dict:
-    payload = {
-        "zone_id": zone_id,
-        "name": data.name,
-        "points": [[p.x, p.y] for p in data.points],
-        "threshold_sec": data.threshold_sec,
-        "color": data.color,
-        "zone_type": data.zone_type,
-        "armed_schedule": data.armed_schedule.model_dump(),
-        "allowed_classes": sorted({c.strip().lower() for c in data.allowed_classes if c.strip()}),
+def _apply(record: RoiZoneRecord, data: ZoneCreate) -> None:
+    record.name = data.name
+    record.points = [[p.x, p.y] for p in data.points]
+    record.threshold_sec = data.threshold_sec
+    record.color = data.color
+    record.zone_type = data.zone_type
+    record.armed_schedule = data.armed_schedule.model_dump()
+    record.allowed_classes = sorted({c.strip().lower() for c in data.allowed_classes if c.strip()})
+    if data.camera_ids is not None:  # omitted on update: keep the current binding
+        record.camera_ids = data.camera_ids or None
+
+
+async def _tenant_rows(db: AsyncSession, tenant_id: str) -> list[RoiZoneRecord]:
+    query = select(RoiZoneRecord).where(RoiZoneRecord.tenant_id == tenant_id).order_by(RoiZoneRecord.id)
+    return list((await db.execute(query)).scalars())
+
+
+async def _zone_or_404(db: AsyncSession, zone_id: int, tenant_id: str) -> RoiZoneRecord:
+    query = select(RoiZoneRecord).where(RoiZoneRecord.id == zone_id, RoiZoneRecord.tenant_id == tenant_id)
+    record = (await db.execute(query)).scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    return record
+
+
+async def _require_own_cameras(db: AsyncSession, camera_ids: Optional[list[str]], tenant_id: str) -> None:
+    if not camera_ids:
+        return
+    query = select(Camera.id).where(Camera.id.in_(camera_ids), Camera.tenant_id == tenant_id)
+    if set(camera_ids) - set((await db.execute(query)).scalars()):
+        raise HTTPException(status_code=422, detail="camera_ids contains an unknown camera")
+
+
+async def _commit_and_publish(db: AsyncSession, tenant_id: str) -> None:
+    """Commit (the audit row shares the transaction), then update the pipelines."""
+    await db.commit()
+    zone_store.replace_tenant(tenant_id, await _tenant_rows(db, tenant_id))
+
+
+def _zone_summary(record: RoiZoneRecord) -> dict:
+    return {
+        "name": record.name,
+        "zone_type": record.zone_type,
+        "camera_ids": record.camera_ids,
+        "points": len(record.points or []),
     }
-    camera_ids = data.camera_ids if data.camera_ids is not None else (existing or {}).get("camera_ids")
-    if camera_ids:
-        payload["camera_ids"] = camera_ids
-    return payload
 
 
 @router.get("/", response_model=list[ZoneResponse])
 async def list_zones(
     camera_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """List all ROI zones, optionally filtered by camera_id."""
-    zones = _load_zones()
+    """List the caller's tenant's zones, optionally filtered by camera_id."""
     result = []
-    for z in zones:
-        zone_cameras = z.get("camera_ids")
-        if camera_id and zone_cameras and camera_id not in zone_cameras:
+    for record in await _tenant_rows(db, current_user.tenant_id):
+        if camera_id and record.camera_ids and camera_id not in record.camera_ids:
             continue
-        result.append(_to_response(z))
+        result.append(_to_response(record_to_dict(record)))
     return result
 
 
@@ -174,15 +176,6 @@ async def list_zone_types(current_user: User = Depends(get_current_active_user))
     ]
 
 
-def _zone_summary(zone: dict) -> dict:
-    return {
-        "name": zone.get("name"),
-        "zone_type": zone.get("zone_type"),
-        "camera_ids": zone.get("camera_ids"),
-        "points": len(zone.get("points") or []),
-    }
-
-
 @router.post("/", response_model=ZoneResponse, status_code=201)
 async def create_zone(
     data: ZoneCreate,
@@ -191,14 +184,16 @@ async def create_zone(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new ROI zone with normalized [0,1] polygon points."""
-    zones = _load_zones()
-    existing_ids = {z.get("zone_id", 0) for z in zones}
-    new_id = max(existing_ids, default=0) + 1
-    new_zone = _serialize(new_id, data)
-    zones.append(new_zone)
-    audit.record(db, request, current_user, "zone.create", "zone", new_id, _zone_summary(new_zone))
-    _save_zones(zones)
-    return _to_response(new_zone)
+    tenant_id = current_user.tenant_id
+    await _require_own_cameras(db, data.camera_ids, tenant_id)
+    record = RoiZoneRecord(tenant_id=tenant_id)
+    _apply(record, data)
+    db.add(record)
+    await db.flush()
+    audit.record(db, request, current_user, "zone.create", "zone", record.id, _zone_summary(record))
+    response = _to_response(record_to_dict(record))
+    await _commit_and_publish(db, tenant_id)
+    return response
 
 
 @router.delete("/{zone_id}", status_code=204)
@@ -209,13 +204,11 @@ async def delete_zone(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an ROI zone by ID."""
-    zones = _load_zones()
-    filtered = [z for z in zones if z.get("zone_id") != zone_id]
-    if len(filtered) == len(zones):
-        raise HTTPException(status_code=404, detail="Zone not found")
-    removed = next(z for z in zones if z.get("zone_id") == zone_id)
-    audit.record(db, request, current_user, "zone.delete", "zone", zone_id, _zone_summary(removed))
-    _save_zones(filtered)
+    tenant_id = current_user.tenant_id
+    record = await _zone_or_404(db, zone_id, tenant_id)
+    audit.record(db, request, current_user, "zone.delete", "zone", zone_id, _zone_summary(record))
+    await db.delete(record)
+    await _commit_and_publish(db, tenant_id)
 
 
 @router.put("/{zone_id}", response_model=ZoneResponse)
@@ -227,11 +220,11 @@ async def update_zone(
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing ROI zone (camera binding is preserved unless provided)."""
-    zones = _load_zones()
-    for i, z in enumerate(zones):
-        if z.get("zone_id") == zone_id:
-            zones[i] = _serialize(zone_id, data, existing=z)
-            audit.record(db, request, current_user, "zone.update", "zone", zone_id, _zone_summary(zones[i]))
-            _save_zones(zones)
-            return _to_response(zones[i])
-    raise HTTPException(status_code=404, detail="Zone not found")
+    tenant_id = current_user.tenant_id
+    record = await _zone_or_404(db, zone_id, tenant_id)
+    await _require_own_cameras(db, data.camera_ids, tenant_id)
+    _apply(record, data)
+    audit.record(db, request, current_user, "zone.update", "zone", zone_id, _zone_summary(record))
+    response = _to_response(record_to_dict(record))
+    await _commit_and_publish(db, tenant_id)
+    return response
