@@ -14,7 +14,8 @@ interface FetchBehaviour {
 function sendToLogin(): void {
   clearSession();
   if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-    window.location.href = "/login";
+    // A full reload (not client navigation) drops all in-memory state.
+    window.location.assign(new URL("/login", window.location.origin).href);
   }
 }
 

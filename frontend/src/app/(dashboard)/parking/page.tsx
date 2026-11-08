@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useMounted, usePolling } from "@/lib/hooks";
 import {
   api,
   type ParkingSpace,
@@ -32,7 +33,7 @@ interface ToastMessage {
 }
 
 export default function ParkingDashboardPage() {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useMounted(); // the 3D view renders client-side only
   const [spaces, setSpaces] = useState<ParkingSpace[]>([]);
   const [stats, setStats] = useState<ParkingStats | null>(null);
   const [activities, setActivities] = useState<ParkingActivity[]>([]);
@@ -81,13 +82,8 @@ export default function ParkingDashboardPage() {
     }
   }, [addToast]);
 
-  // Set mounted check for Next.js SSR
-  useEffect(() => {
-    setMounted(true);
-    loadData();
-    const interval = setInterval(() => loadData(true), 30000); // Poll every 30s as fallback
-    return () => clearInterval(interval);
-  }, [loadData]);
+  // Poll every 30s as a fallback to the live WebSocket events.
+  usePolling(loadData, 30000);
 
   // Live parking events
   const handleParkingMessage = useCallback((message: FeedMessage) => {

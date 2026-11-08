@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePolling } from "@/lib/hooks";
 import { Activity, Camera as CameraIcon, Ruler, ShieldAlert, Users, Wifi, WifiOff } from "lucide-react";
 import { api, type ArmMode, type Camera, type FeedData, type SecurityState, type Alert } from "@/lib/api";
 import { useWebSocket } from "@/lib/websocket";
@@ -48,9 +49,9 @@ export default function SecurityPage() {
     }
   }, []);
 
+  usePolling(load, 15000);
+
   useEffect(() => {
-    load();
-    const i = setInterval(load, 15000);
     // Seed the escalation feed with recent persisted alerts.
     api.alerts
       .list({ limit: "20" })
@@ -69,9 +70,8 @@ export default function SecurityPage() {
             }))
         )
       )
-      .catch(() => {});
-    return () => clearInterval(i);
-  }, [load]);
+      .catch((err) => console.error("Escalation seed load failed:", err));
+  }, []);
 
   // Live WS processing
   useEffect(() => {

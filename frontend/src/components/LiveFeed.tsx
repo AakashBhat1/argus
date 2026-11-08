@@ -51,6 +51,8 @@ function originLabel(origin?: string): string {
 export default function LiveFeed({ lastMessage, cameraId, compact = false }: Props) {
   const feedsRef = useRef<Record<string, FeedData>>({});
   const [cameraIds, setCameraIds] = useState<string[]>([]);
+  // What the camera picker shows; refs must not be read during render.
+  const [cameraMeta, setCameraMeta] = useState<Record<string, { name?: string; isVideo?: boolean }>>({});
   const [selectedCamera, setSelectedCamera] = useState<string | null>(cameraId ?? null);
   const [currentFeed, setCurrentFeed] = useState<FeedData | null>(null);
   const [isPaused, setIsPaused] = useState(false);
@@ -69,6 +71,7 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
     feedsRef.current = { ...feedsRef.current, [camId]: data };
     const ids = Object.keys(feedsRef.current);
     setCameraIds(ids);
+    setCameraMeta((prev) => ({ ...prev, [camId]: { name: data.camera_name, isVideo: data.is_video_source } }));
 
     if (!selectedCamera) setSelectedCamera(camId);
     if (camId === selectedCamera || (!selectedCamera && ids.length === 1)) {
@@ -176,7 +179,7 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
               {showCameraSelect && (
                 <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-lg border border-slate-700/40 bg-slate-900/95 backdrop-blur-xl shadow-xl overflow-hidden">
                   {cameraIds.map((id) => {
-                    const feed = feedsRef.current[id];
+                    const feed = cameraMeta[id];
                     return (
                       <button
                         key={id}
@@ -186,8 +189,8 @@ export default function LiveFeed({ lastMessage, cameraId, compact = false }: Pro
                           id === selectedCamera ? "bg-blue-500/10 text-blue-300" : "text-slate-400 hover:bg-slate-800/60"
                         )}
                       >
-                        {feed?.is_video_source ? <Film className="w-3 h-3 text-violet-400" /> : <Radio className="w-3 h-3 text-emerald-400" />}
-                        <span className="truncate">{feed?.camera_name || id}</span>
+                        {feed?.isVideo ? <Film className="w-3 h-3 text-violet-400" /> : <Radio className="w-3 h-3 text-emerald-400" />}
+                        <span className="truncate">{feed?.name || id}</span>
                       </button>
                     );
                   })}

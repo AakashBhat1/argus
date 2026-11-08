@@ -21,26 +21,21 @@ interface ParkBotChatProps {
   addLog: (type: "info" | "success" | "warn" | "system", message: string) => void;
 }
 
+const WELCOME_MESSAGE: ChatMessage = {
+  id: "welcome",
+  sender: "bot",
+  text: "Hello! I am ParkBot. I can assist you with looking up space occupancy, finding vehicle locations, or releasing slots. Ask me anything about parking.",
+  timestamp: "",
+};
+
 export default function ParkBotChat({ isAdmin, onCommandExecuted, addLog }: ParkBotChatProps) {
   const [chatInput, setChatInput] = useState("");
-  const [chatMode, setChatMode] = useState<"read" | "command">("read");
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  // null = the user has not picked a mode: admins default to command mode.
+  const [modePref, setChatMode] = useState<"read" | "command" | null>(null);
+  const chatMode: "read" | "command" = isAdmin ? (modePref ?? "command") : "read";
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
-
-  // Default mode & welcome message
-  useEffect(() => {
-    if (isAdmin) {
-      setChatMode("command");
-    }
-    const welcomeMsg: ChatMessage = {
-      id: "welcome",
-      sender: "bot",
-      text: "Hello! I am ParkBot. I can assist you with looking up space occupancy, finding vehicle locations, or releasing slots. Ask me anything about parking.",
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-    setChatMessages([welcomeMsg]);
-  }, [isAdmin]);
 
   // Scroll to bottom
   useEffect(() => {

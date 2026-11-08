@@ -19,6 +19,7 @@ export default function WebRTCPlayer({ cameraId, service = "surveillance", class
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -88,7 +89,7 @@ export default function WebRTCPlayer({ cameraId, service = "surveillance", class
 
   return (
     <div className={`relative bg-black w-full h-full overflow-hidden ${className}`}>
-      {error && !videoRef.current?.srcObject && (
+      {error && !playing && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 z-10">
           <Video className="w-12 h-12 mb-3 opacity-30 animate-pulse" />
           <p className="text-sm">Connecting to stream...</p>
@@ -96,6 +97,8 @@ export default function WebRTCPlayer({ cameraId, service = "surveillance", class
       )}
       <video
         ref={videoRef}
+        onPlaying={() => setPlaying(true)}
+        onEmptied={() => setPlaying(false)}
         autoPlay
         playsInline
         muted
