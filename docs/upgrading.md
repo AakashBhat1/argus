@@ -129,7 +129,19 @@ docker compose ps        # all healthy?
 
 At startup each service seals any plaintext camera URL left in its database.
 
-### 10. Create the first administrator (only if there are no users yet)
+### 10. Import the existing zones
+
+Zones used to live in one JSON file with no owner, and now belong to a tenant.
+The old stack had one tenant, with id `1`:
+
+```bash
+docker compose exec surveillance python -m app.cli.import_zones --tenant-id 1
+```
+
+Until this runs, no zones are active and intrusion events do not fire. It
+refuses to run twice for the same tenant.
+
+### 11. Create the first administrator (only if there are no users yet)
 
 ```bash
 docker compose exec surveillance python -m app.cli.create_admin --username admin
@@ -137,7 +149,7 @@ docker compose exec surveillance python -m app.cli.create_admin --username admin
 
 Existing users keep their passwords.
 
-### 11. Public TLS
+### 12. Public TLS
 
 ```bash
 scripts/setup-tls.sh <your-domain> <your-email>

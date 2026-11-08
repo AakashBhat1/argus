@@ -58,7 +58,7 @@ that the design starts from them.
 | T | CSRF on cookie-authenticated writes | CSRF header plus Origin check against `CORS_ORIGINS` | `web_auth.check_same_origin`, `web_auth.http_credential` |
 | T | Cross-site WebSocket hijacking | Origin check on the handshake; socket closed at token expiry | `web_auth.websocket_credential`, `web_auth.hold_until_expiry` |
 | R | "I did not change that camera" | `audit_events`: actor, source IP, time, details | `argus_common/audit.py`; call sites in both services |
-| I | Cross-tenant reads | Database queries filter by the caller's `tenant_id`; the audit API is tenant-scoped. **Zones are the exception (R9).** | routers; `tests/test_08_tenant_isolation.py`, `tests/test_audit_log.py` |
+| I | Cross-tenant reads | Every query filters by the caller's `tenant_id`, including zones and the audit API; zones can only be bound to the tenant's own cameras; pipelines read only their own tenant's zones | routers, `app/services/zone_store.py`; `tests/test_08_tenant_isolation.py`, `tests/test_zones_tenancy.py`, `tests/test_audit_log.py` |
 | I | Camera passwords via the API | URLs masked (`redact_url`) in every response; credentials restored server-side on edit | `argus_common/net.py`, `routers/cameras.py` |
 | I | XSS reading tokens | Tokens are not script-readable; security headers | `deploy/nginx/snippets/security-headers.conf` (CSP still allows inline scripts: R3) |
 | D | Request floods, expensive snapshots | Per-IP limits; snapshots 30/min per session; per-IP connection cap | `10-gateway.conf.template` |
@@ -115,7 +115,7 @@ that the design starts from them.
 
 | # | Risk | Why accepted for now | Plan |
 |---|---|---|---|
-| R1 | Zones and grants are not in the database, so their audit row cannot share a transaction with the change (zones: a JSON file; grants: in memory). A database failure after the file write leaves an unaudited zone change. | The window is one failed commit. | Move zones into the database with the full baseline migration (correction 4.7). |
+| R1 | Grants live in memory, so their audit row cannot share a transaction with the change, and they are lost on restart. | Grants are short-lived. | Move them to the database (correction C12). |
 | R2 | The surveillance schema still comes from `create_all`; the Alembic baseline is stamp-only. | New migrations are guarded; the round-trip runs in CI. | Full baseline migration (4.7, `docs/REMAINING_WORK.md`). |
 | R3 | The CSP allows `'unsafe-inline'` scripts (Next.js). | No known injection point; tokens are not script-readable. | Nonce CSP through Next.js middleware (4.4). |
 | R4 | Application logs contain usernames and IPs. | Needed for operations; rotation of 30 days or less is documented. | Hash or drop them (4.9). |
@@ -123,7 +123,6 @@ that the design starts from them.
 | R6 | Trivy is report-only; the Python images carry HIGH findings in setuptools' vendored packages (setuptools held at 80.9 for deep-sort's `pkg_resources`). | Build-time code, not reachable at runtime. | Replace deep-sort's embedder or vendor the tracker; then make Trivy blocking. |
 | R7 | A compromised host holds its own keys (`/run/secrets`). | Inherent. | Separate hosts limit the blast radius; rotation procedures are in `SECURITY.md`. |
 | R8 | Failed logins for unknown usernames are filed under the default tenant. | There is no account to scope them by. | Acceptable: admins of other tenants never see them. |
-| R9 | **Zones are not tenant-scoped.** They live in one global JSON file (`ROI_ZONES_CONFIG_PATH`), so in a multi-tenant deployment any operator can read every tenant's zones and any tenant's admin can change them. | Current deployments are single-tenant. | Do not onboard a second tenant before zones move into the database with a `tenant_id` (`docs/REMAINING_WORK.md`, correction C2). |
 
 ## 6. Phase 6 (face service): threats to design against
 
