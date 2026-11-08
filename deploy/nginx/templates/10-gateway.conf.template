@@ -13,6 +13,25 @@ limit_req_zone $binary_remote_addr zone=argus_auth:10m rate=10r/m;
 limit_req_zone $binary_remote_addr zone=argus_api:10m rate=30r/s;
 limit_conn_zone $binary_remote_addr zone=argus_conn:10m;
 
+# Per-session key for expensive endpoints: the last 22 characters of the
+# access token's signature (cookie or Bearer), else the client address. The
+# per-IP argus_api limit still applies on top. Tokens rotate every few
+# minutes, so this bounds bursts, not daily totals.
+map $http_cookie $argus_cookie_key {
+    "~(^|;\s*)__Host-argus_at=[^;]*(?<argus_ck>[A-Za-z0-9_-]{22})(;|$)" $argus_ck;
+    default "";
+}
+map $http_authorization $argus_bearer_key {
+    "~^Bearer\s+\S*(?<argus_bk>[A-Za-z0-9_-]{22})$" $argus_bk;
+    default "";
+}
+map "$argus_cookie_key$argus_bearer_key" $argus_session_key {
+    "" $binary_remote_addr;
+    default "$argus_cookie_key$argus_bearer_key";
+}
+# Camera snapshots decode a frame per request: 30 per minute per session.
+limit_req_zone $argus_session_key zone=argus_snapshot:10m rate=30r/m;
+
 
 upstream surveillance_api   { server ${SURVEILLANCE_UPSTREAM}; keepalive 16; }
 upstream argus_frontend     { server ${FRONTEND_UPSTREAM}; keepalive 16; }
@@ -48,6 +67,24 @@ server {
 
     location = /api/v1/auth/token {
         limit_req zone=argus_auth burst=5 nodelay;
+        limit_req_status 429;
+        include /etc/nginx/snippets/proxy-headers.conf;
+        proxy_pass http://surveillance_api;
+    }
+
+    # Snapshots are expensive: per-session and per-IP limits. Regex
+    # locations win over the /api/ prefixes below.
+    location ~ "^/api/v1/parking/cameras/[A-Za-z0-9_-]{1,64}/snapshot$" {
+        limit_req zone=argus_snapshot burst=10 nodelay;
+        limit_req zone=argus_api burst=60 nodelay;
+        limit_req_status 429;
+        include /etc/nginx/snippets/proxy-headers.conf;
+        include /etc/nginx/argus.d/05-gateway-to-parking.snippet;
+        proxy_pass https://${PARKING_EDGE};
+    }
+    location ~ "^/api/v1/streams/[A-Za-z0-9_-]{1,64}/snapshot$" {
+        limit_req zone=argus_snapshot burst=10 nodelay;
+        limit_req zone=argus_api burst=60 nodelay;
         limit_req_status 429;
         include /etc/nginx/snippets/proxy-headers.conf;
         proxy_pass http://surveillance_api;
