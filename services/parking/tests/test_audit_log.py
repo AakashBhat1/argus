@@ -69,8 +69,10 @@ async def test_camera_crud_is_audited_without_credentials(app_with_db, test_sess
         )
         assert created.status_code == 201, created.text
         camera_id = created.json()["id"]
-        assert (await client.put(f"/api/v1/parking/cameras/{camera_id}", json={"name": "audit-gate-2"})).status_code == 200
-        assert (await client.delete(f"/api/v1/parking/cameras/{camera_id}")).status_code == 204
+        response = await client.put(f"/api/v1/parking/cameras/{camera_id}", json={"name": "audit-gate-2"})
+        assert response.status_code == 200
+        response = await client.delete(f"/api/v1/parking/cameras/{camera_id}")
+        assert response.status_code == 204
     rows = await _rows(test_session_factory, target_id=camera_id)
     assert [r.action for r in rows] == ["camera.create", "camera.update", "camera.delete"]
     assert all(r.actor == admin.username for r in rows)
@@ -112,7 +114,8 @@ async def test_proposal_is_bound_to_its_admin_tenant_and_ttl(app_with_db, test_s
         proposal_id = (await client.post("/api/v1/parking/chat/command", json={"message": message})).json()["proposal_id"]
     for intruder in (other_admin, foreign_admin):
         async with _client(app_with_db, intruder) as client:
-            assert (await client.post("/api/v1/parking/chat/confirm", json={"proposal_id": proposal_id})).status_code == 409
+            response = await client.post("/api/v1/parking/chat/confirm", json={"proposal_id": proposal_id})
+            assert response.status_code == 409
 
     async with test_session_factory() as session:
         await session.execute(
@@ -120,7 +123,8 @@ async def test_proposal_is_bound_to_its_admin_tenant_and_ttl(app_with_db, test_s
         )
         await session.commit()
     async with _client(app_with_db, owner) as client:
-        assert (await client.post("/api/v1/parking/chat/confirm", json={"proposal_id": proposal_id})).status_code == 409
+        response = await client.post("/api/v1/parking/chat/confirm", json={"proposal_id": proposal_id})
+        assert response.status_code == 409
 
 
 async def test_rejected_command_is_audited_and_operators_cannot_command(app_with_db, operator_user, test_session_factory):
@@ -131,8 +135,10 @@ async def test_rejected_command_is_audited_and_operators_cannot_command(app_with
     rows = await _rows(test_session_factory, actor=admin.username)
     assert [r.action for r in rows] == ["parkbot.command.rejected"]
     async with _client(app_with_db, operator_user) as client:
-        assert (await client.post("/api/v1/parking/chat/confirm", json={"proposal_id": str(uuid.uuid4())})).status_code == 403
-        assert (await client.get("/api/v1/parking/audit")).status_code == 403
+        response = await client.post("/api/v1/parking/chat/confirm", json={"proposal_id": str(uuid.uuid4())})
+        assert response.status_code == 403
+        response = await client.get("/api/v1/parking/audit")
+        assert response.status_code == 403
 
 
 async def test_manual_release_is_audited(app_with_db, test_session_factory, db_session):
