@@ -11,7 +11,7 @@ dependencies = [
   "argus-common",
   "numpy==1.26.4",
   "opencv-python-headless==4.9.0.80",
-  "openvino==2024.6.0",
+  "openvino==2026.4.1",
   "pydantic-settings==2.1.0",
   # deep-sort-realtime imports pkg_resources, retained by this setuptools line.
   "setuptools==80.9.0",
