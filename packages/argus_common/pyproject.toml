@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==80.9.0", "wheel"]
+requires = ["setuptools==80.10.2", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,17 +11,17 @@ dependencies = [
   "cryptography>=44.0.0",
   "pyjwt[crypto]==2.15.1",
   "fastapi==0.162.2",
-  "httpx==0.26.0",
+  "httpx==0.28.1",
   "pydantic==2.14.3",
-  "pydantic-settings==2.1.0",
-  "sqlalchemy==2.0.27",
+  "pydantic-settings==2.16.2",
+  "sqlalchemy==2.1.8",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=9.0.3,<10.0.0",
   "pytest-asyncio==1.4.1.post1",
-  "aiosqlite==0.19.0",
+  "aiosqlite==0.22.1",
 ]
 
 [tool.setuptools.packages.find]
