@@ -20,7 +20,7 @@ dependencies = [
   "alembic==1.13.1",
   "pydantic==2.14.3",
   "pydantic-settings==2.1.0",
-  "websockets==12.0",
+  "websockets==17.4",
   "httpx==0.26.0",
   "python-dotenv==1.2.4",
   # IANA zone data for zoneinfo where the OS has none (Windows, minimal images).
