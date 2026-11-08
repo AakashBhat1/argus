@@ -28,8 +28,8 @@ def validate_plate(plate: str) -> tuple[bool, str]:
     normalized = normalize_plate_text(str(plate))
     if not is_valid_plate(normalized):
         return False, (
-            f"Invalid plate format '{plate}'. "
-            f"Expected pattern {PLATE_REGEX.pattern}"
+            f"Invalid plate '{plate}'. Expected a known state code and format "
+            f"{PLATE_REGEX.pattern}"
         )
     return True, normalized
 

@@ -19,8 +19,8 @@ router = APIRouter(prefix="/intents", tags=["intents"])
 async def list_intent_events(
     camera_id: Optional[str] = None,
     intent_type: Optional[str] = None,
-    hours: int = Query(default=24, le=168),
-    limit: int = Query(default=50, le=200),
+    hours: int = Query(default=24, ge=1, le=168),
+    limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -62,7 +62,7 @@ async def list_intent_events(
 @router.get("/distribution")
 async def intent_distribution(
     camera_id: Optional[str] = None,
-    hours: int = Query(default=24, le=168),
+    hours: int = Query(default=24, ge=1, le=168),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):

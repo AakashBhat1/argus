@@ -28,6 +28,7 @@ from app.services.auth import Principal as User, get_current_active_user, requir
 from app.services.parking_seeder import seed_parking_spaces_for_tenant
 from app.services.parking_occupancy import OccupancyDetector, SlotGeometry
 from app.services.parking_occupancy_service import set_cached_slots, slots_from_rows
+from app.services.stream_manager import stream_manager
 from argus_vision.sources import open_capture as _open_capture
 from app.services.websocket_manager import ws_manager
 
@@ -126,7 +127,7 @@ async def release_parking_space(
 
 @router.get("/plates", response_model=list[DetectedPlateResponse])
 async def list_plates(
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -143,7 +144,7 @@ async def latest_plate(
 
 @router.get("/activity", response_model=list[ParkingActivityResponse])
 async def list_activity(
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -317,11 +318,25 @@ async def preview_camera_slots(
         )
         for slot in payload.slots
     ]
-    readings = detector.score_slots(frame, geometries, [])
+    pool = stream_manager.inference_pool
+    detection_ran = pool is not None and bool(pool.is_running)
+    detections = await pool.submit(frame, payload.camera_id) if detection_ran else []
+    boxes = [
+        {
+            'class_label': detection['class_label'],
+            'bbox_x': detection['bbox'][0],
+            'bbox_y': detection['bbox'][1],
+            'bbox_w': detection['bbox'][2],
+            'bbox_h': detection['bbox'][3],
+        }
+        for detection in detections
+    ]
+    readings = detector.score_slots(frame, geometries, boxes)
     height, width = frame.shape[:2]
     return ParkingSlotPreviewResponse(
         camera_id=payload.camera_id,
         width=width,
         height=height,
         slots=[reading.to_dict() for reading in readings],
+        vehicle_detection_ran=detection_ran,
     )

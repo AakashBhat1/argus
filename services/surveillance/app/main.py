@@ -16,7 +16,7 @@ from app.routers import alerts, analytics, cameras, crime, detections, intents, 
 from app.services.auth import authenticate_websocket, get_current_active_user, jwks_document, signing_key
 from app.services.camera_secrets import camera_secret_box, seal_stored_stream_urls
 from argus_common.web_auth import WS_AUTH_CLOSE_CODE, hold_until_expiry
-from argus_vision.inference_worker import InferenceWorkerPool
+from argus_vision.inference_worker import InferenceWorkerPool, inference_worker_count
 from argus_vision.metrics import inference_metrics
 from app.services.roboflow_classifier import roboflow_classifier
 from app.services.crime_classifier import crime_classifier
@@ -61,9 +61,10 @@ async def lifespan(app: FastAPI):
     await zone_store.load_all()
 
     # Initialize the inference worker pool
+    workers = inference_worker_count(settings.INFERENCE_WORKERS, detector.optimal_infer_requests)
     inference_pool = InferenceWorkerPool(
         detector=detector,
-        num_workers=settings.INFERENCE_WORKERS,
+        num_workers=workers,
         max_batch_size=settings.BATCH_MAX_SIZE,
         batch_timeout_ms=settings.BATCH_TIMEOUT_MS,
         queue_max_size=settings.INFERENCE_QUEUE_MAX,
@@ -82,7 +83,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"OpenVINO inference pipeline ready: "
         f"device={model_info['device_actual']}, "
-        f"workers={settings.INFERENCE_WORKERS}, "
+        f"workers={workers}, "
         f"batch_size={settings.BATCH_MAX_SIZE}"
     )
 

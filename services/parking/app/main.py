@@ -26,7 +26,7 @@ from app.services.outbox import outbox_runner
 from app.services.stream_manager import stream_manager
 from app.services.websocket_manager import ws_manager
 from argus_vision.engine import detector
-from argus_vision.inference_worker import InferenceWorkerPool
+from argus_vision.inference_worker import InferenceWorkerPool, inference_worker_count
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
     inference_pool = InferenceWorkerPool(
         detector=detector,
-        num_workers=settings.INFERENCE_WORKERS,
+        num_workers=inference_worker_count(settings.INFERENCE_WORKERS, detector.optimal_infer_requests),
         max_batch_size=settings.BATCH_MAX_SIZE,
         batch_timeout_ms=settings.BATCH_TIMEOUT_MS,
         queue_max_size=settings.INFERENCE_QUEUE_MAX,

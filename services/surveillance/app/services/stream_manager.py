@@ -23,6 +23,13 @@ from argus_common.net import (
 )
 from argus_vision.metrics import inference_metrics
 from argus_vision.roi import IntrusionEvent
+from argus_vision.stream_runtime import (
+    MAX_FRAME_SKIP,
+    FramePacer,
+    frame_skip_ceiling,
+    next_frame_skip,
+    wait_for_stream_exit,
+)
 from argus_vision.sources import (
     encode_frame_to_base64 as _encode_frame_to_base64,
     mediamtx_can_pull as _mediamtx_can_pull,
@@ -76,8 +83,11 @@ class VideoStream:
         )
 
         # Adaptive FPS state
-        self._current_frame_skip = self._settings.FRAME_SKIP
+        self._current_frame_skip = max(1, int(self._settings.FRAME_SKIP))
+        self._skip_ceiling = MAX_FRAME_SKIP
         self._last_fps_eval_time = time.time()
+        self._pacer: Optional[FramePacer] = None
+        self._paused_frame_pos: Optional[int] = None
 
     async def start(self) -> bool:
         """
@@ -113,34 +123,69 @@ class VideoStream:
 
     async def stop(self):
         self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        if self._cap and self._cap.isOpened():
-            self._cap.release()
-        self._pipeline.reset()
+        finished = await wait_for_stream_exit(self._task, self.camera_name) if self._task else True
+        await self._release_capture()
+        if finished:
+            await asyncio.get_running_loop().run_in_executor(None, self._pipeline.reset)
+        else:
+            logger.warning("Skipping pipeline reset for %s: a worker is still using it", self.camera_name)
         logger.info("Stream stopped: %s (%s)", self.camera_name, self.camera_id)
 
     def pause(self):
+        """Ask the stream loop, which owns the capture, to release it."""
         self._paused = True
-        # Release capture to free resources; save frame position for video files
-        self._paused_frame_pos = None
-        if self._cap and self._cap.isOpened():
-            if self.is_video_source:
-                self._paused_frame_pos = int(self._cap.get(cv2.CAP_PROP_POS_FRAMES))
-            self._cap.release()
         logger.info("Stream paused: %s (%s)", self.camera_name, self.camera_id)
 
     def resume(self):
+        """Ask the stream loop to reopen the capture where it left off."""
         self._paused = False
-        # Reopen capture and seek to saved position
-        self._cap = _open_capture(self._capture_url)
-        if self._cap and self.is_video_source and hasattr(self, "_paused_frame_pos") and self._paused_frame_pos is not None:
-            self._cap.set(cv2.CAP_PROP_POS_FRAMES, self._paused_frame_pos)
         logger.info("Stream resumed: %s (%s)", self.camera_name, self.camera_id)
+
+    async def _release_capture(self) -> None:
+        capture, self._cap = self._cap, None
+        if capture is not None:
+            # Off the event loop: a release waits for any read in progress.
+            await asyncio.get_running_loop().run_in_executor(None, capture.release)
+
+    async def _park_capture(self) -> None:
+        """Remember a file's position and free the capture while paused."""
+        if self._cap is None:
+            return
+        if self.is_video_source and self._cap.isOpened():
+            self._paused_frame_pos = int(self._cap.get(cv2.CAP_PROP_POS_FRAMES))
+        await self._release_capture()
+
+    async def _reopen_capture(self, loop) -> bool:
+        self._cap = await loop.run_in_executor(None, _open_capture, self._capture_url)
+        if not self._cap.isOpened():
+            return False
+        if self._paused_frame_pos is not None:
+            await loop.run_in_executor(None, self._cap.set, cv2.CAP_PROP_POS_FRAMES, self._paused_frame_pos)
+            self._paused_frame_pos = None
+        if self._pacer is not None:
+            self._pacer.restart()
+        return True
+
+    def _adopt_source_rate(self) -> None:
+        """Size frame skipping and file pacing to what this source delivers."""
+        source_fps = float(self._cap.get(cv2.CAP_PROP_FPS))
+        self._skip_ceiling = frame_skip_ceiling(source_fps, self._settings.MIN_ANALYSIS_FPS)
+        self._current_frame_skip = min(self._current_frame_skip, self._skip_ceiling)
+        if self.is_video_source:
+            self._pacer = FramePacer(source_fps)
+
+    async def _next_frame(self, loop) -> tuple[bool, Optional[np.ndarray]]:
+        """Advance one frame, decoding to an image only if it will be analysed."""
+        if self._pacer is not None:
+            delay = self._pacer.next_delay()
+            if delay > 0:
+                await asyncio.sleep(delay)
+        analyse = (self._frame_count + 1) % self._current_frame_skip == 0
+        if self._pacer is not None and self._pacer.should_drop():
+            analyse = False
+        if analyse:
+            return await loop.run_in_executor(None, self._cap.read)
+        return await loop.run_in_executor(None, self._cap.grab), None
 
     @property
     def is_video_source(self) -> bool:
@@ -163,15 +208,11 @@ class VideoStream:
             return
 
         metrics = self._inference_pool.get_metrics()
-        latency = metrics.get("avg_batch_latency_ms", 0)
+        latency = metrics.get("recent_batch_latency_ms", 0)
         target = self._settings.TARGET_LATENCY_MS
 
         old_skip = self._current_frame_skip
-
-        if latency > target * 1.5:
-            self._current_frame_skip = min(self._current_frame_skip + 1, 6)
-        elif latency < target * 0.5:
-            self._current_frame_skip = max(self._current_frame_skip - 1, 1)
+        self._current_frame_skip = next_frame_skip(old_skip, latency, target, self._skip_ceiling)
 
         if old_skip != self._current_frame_skip:
             logger.info(
@@ -199,26 +240,25 @@ class VideoStream:
             return
 
         try:
+            self._adopt_source_rate()
             while self._running:
                 # When paused, capture is released — sleep until resumed
                 if self._paused:
+                    await self._park_capture()
                     await asyncio.sleep(0.2)
                     continue
 
                 # After resume, capture may need to be verified
                 if not self._cap or not self._cap.isOpened():
-                    self._cap = await loop.run_in_executor(
-                        None, _open_capture, self._capture_url
-                    )
-                    if not self._cap.isOpened():
+                    if not await self._reopen_capture(loop):
                         await asyncio.sleep(0.5)
                         continue
 
-                ret, frame = await loop.run_in_executor(None, self._cap.read)
+                ret, frame = await self._next_frame(loop)
                 if not ret:
                     # For video files, end-of-file means loop back to start
                     if self.is_video_source:
-                        self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        await loop.run_in_executor(None, self._cap.set, cv2.CAP_PROP_POS_FRAMES, 0)
                         logger.info("Video looped: %s", self.camera_name)
                         continue
 
@@ -240,7 +280,7 @@ class VideoStream:
                         backoff,
                     )
                     await asyncio.sleep(backoff)
-                    self._cap.release()
+                    await self._release_capture()
                     self._cap = await loop.run_in_executor(
                         None, _open_capture, self._capture_url
                     )
@@ -251,7 +291,7 @@ class VideoStream:
 
                 self._update_adaptive_fps()
 
-                if self._frame_count % self._current_frame_skip != 0:
+                if frame is None:
                     continue
 
                 t_infer_start = time.perf_counter()
@@ -347,8 +387,7 @@ class VideoStream:
         except Exception as exc:
             logger.exception("Stream error for %s: %s", self.camera_name, exc)
         finally:
-            if self._cap and self._cap.isOpened():
-                self._cap.release()
+            await self._release_capture()
 
     async def _store_detections(self, tracked_objects: list[dict]):
         try:
@@ -747,7 +786,7 @@ class StreamManager:
             if existing._running:
                 return True
             await existing.stop()
-            del self._streams[camera.id]
+            self._streams.pop(camera.id, None)
 
         if not self._inference_pool:
             logger.error("Cannot start stream: Inference pool not initialized")
@@ -804,9 +843,9 @@ class StreamManager:
         return True
 
     async def stop_stream(self, camera_id: str):
-        if camera_id in self._streams:
-            await self._streams[camera_id].stop()
-            del self._streams[camera_id]
+        stream = self._streams.pop(camera_id, None)
+        if stream is not None:
+            await stream.stop()
 
         if self._settings.MEDIAMTX_ENABLED:
             try:
@@ -823,9 +862,9 @@ class StreamManager:
                 logger.warning("MediaMTX API error (delete path): %s", e)
 
     async def stop_all(self):
-        for stream in self._streams.values():
-            await stream.stop()
+        streams = list(self._streams.values())
         self._streams.clear()
+        await asyncio.gather(*(stream.stop() for stream in streams))
 
     def pause_stream(self, camera_id: str) -> bool:
         stream = self._streams.get(camera_id)

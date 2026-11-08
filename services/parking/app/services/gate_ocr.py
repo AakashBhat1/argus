@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.database import get_session_factory
 from app.models import VehicleProfile
 from app.services.events import publish_gate_pass
+from app.services.gate_roi import parse_gate_roi
 from app.services.ocr_service import recognize_plate
 from app.services import parking_service
 from app.services.websocket_manager import ws_manager
@@ -41,28 +42,8 @@ def point_in_gate_roi(
     if not gate_roi or frame_w <= 0 or frame_h <= 0:
         return False
 
-    points: list[list[float]] = []
-    try:
-        if isinstance(gate_roi, dict) and "points" in gate_roi:
-            gate_roi = gate_roi["points"]
-        if not isinstance(gate_roi, (list, tuple)) or len(gate_roi) < 3:
-            return False
-
-        # Flat [x1,y1,x2,y2,...]
-        if gate_roi and isinstance(gate_roi[0], (int, float)):
-            flat = list(gate_roi)
-            for i in range(0, len(flat) - 1, 2):
-                points.append([float(flat[i]), float(flat[i + 1])])
-        else:
-            for p in gate_roi:
-                if isinstance(p, dict):
-                    points.append([float(p.get("x", 0)), float(p.get("y", 0))])
-                elif isinstance(p, (list, tuple)) and len(p) >= 2:
-                    points.append([float(p[0]), float(p[1])])
-    except (TypeError, ValueError):
-        return False
-
-    if len(points) < 3:
+    points = parse_gate_roi(gate_roi)
+    if points is None:
         return False
 
     arr = np.array(points, dtype=np.float32)

@@ -4,7 +4,14 @@ from typing import Literal, Optional
 from app.models import UserRole
 from app.utils import iso_utc
 from argus_common.net import redact_url
-from argus_vision.schemas import CameraCalibrationSchema
+from argus_vision.schemas import (
+    CameraCalibrationSchema,
+    CameraFps,
+    CameraLocation,
+    CameraName,
+    CameraResolution,
+    CameraStreamUrl,
+)
 
 
 class Token(BaseModel):
@@ -49,22 +56,22 @@ class UserResponse(BaseModel):
 
 
 class CameraCreate(BaseModel):
-    name: str = Field(..., max_length=255)
-    location: str = Field(..., max_length=500)
-    stream_url: str = Field(..., max_length=1000)
-    resolution: str = "1280x720"
-    fps: int = 30
+    name: CameraName
+    location: CameraLocation
+    stream_url: CameraStreamUrl
+    resolution: CameraResolution = "1280x720"
+    fps: CameraFps = 30
     # Gate and lot cameras belong to the parking service.
     role: Literal['surveillance'] = 'surveillance'
     calibration: Optional[CameraCalibrationSchema] = None
 
 
 class CameraUpdate(BaseModel):
-    name: Optional[str] = None
-    location: Optional[str] = None
-    stream_url: Optional[str] = None
-    resolution: Optional[str] = None
-    fps: Optional[int] = None
+    name: Optional[CameraName] = None
+    location: Optional[CameraLocation] = None
+    stream_url: Optional[CameraStreamUrl] = None
+    resolution: Optional[CameraResolution] = None
+    fps: Optional[CameraFps] = None
     is_active: Optional[bool] = None
     role: Optional[Literal['surveillance']] = None
     calibration: Optional[CameraCalibrationSchema] = None

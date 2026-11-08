@@ -2,9 +2,34 @@
 
 from __future__ import annotations
 
-from typing import Optional
+import re
+from typing import Annotated, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints, field_validator
+
+from argus_vision.geometry import homography_problem
+
+MIN_FRAME_SIDE_PX = 16
+MAX_FRAME_SIDE_PX = 16384
+_RESOLUTION = re.compile(r"^(\d{1,6})x(\d{1,6})$")
+
+
+def _valid_resolution(value: str) -> str:
+    text = value.strip().lower()
+    match = _RESOLUTION.match(text)
+    if not match or not all(MIN_FRAME_SIDE_PX <= int(side) <= MAX_FRAME_SIDE_PX for side in match.groups()):
+        raise ValueError(
+            f"resolution must look like 1280x720, each side {MIN_FRAME_SIDE_PX}-{MAX_FRAME_SIDE_PX} pixels"
+        )
+    return text
+
+
+# One definition of a valid camera, used by every service that stores cameras.
+CameraName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+CameraLocation = Annotated[str, StringConstraints(max_length=500)]
+CameraStreamUrl = Annotated[str, StringConstraints(max_length=1000)]
+CameraResolution = Annotated[str, AfterValidator(_valid_resolution)]
+CameraFps = Annotated[int, Field(ge=1, le=120)]
 
 
 class CameraCalibrationSchema(BaseModel):
@@ -39,4 +64,7 @@ class CameraCalibrationSchema(BaseModel):
             raise ValueError("homography_world_points must match homography_image_points")
         if points and len(points) < 4:
             raise ValueError("at least four point pairs are required for a ground homography")
+        problem = homography_problem(image_points, points) if points else None
+        if problem:
+            raise ValueError(problem)
         return points

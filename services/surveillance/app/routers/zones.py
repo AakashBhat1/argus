@@ -1,9 +1,10 @@
 """CRUD endpoints for ROI zones. Every zone belongs to one tenant."""
 
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +18,18 @@ from argus_vision.roi import ZONE_TYPES, ArmedSchedule
 router = APIRouter(prefix="/zones", tags=["zones"])
 
 ZoneType = Literal["restricted", "perimeter", "entrance", "driveway", "parking", "public"]
+
+# Every point is tested against every track on every frame and sent to every
+# viewer, so the count bounds per-frame cost. A hand-drawn zone needs far fewer.
+MAX_ZONE_POINTS = 256
+MAX_DWELL_SECONDS = 86_400.0
+# Smaller than a 3-pixel square on a 1080p frame: nothing can stand in it.
+MIN_ZONE_AREA = 1e-5
+MAX_ZONE_ID = 2**31 - 1  # the id column is a 32-bit integer on PostgreSQL
+
+ZoneName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+ColorChannel = Annotated[int, Field(ge=0, le=255)]
+ZoneId = Annotated[int, Path(ge=1, le=MAX_ZONE_ID)]
 
 
 class ZonePoint(BaseModel):
@@ -40,9 +53,17 @@ class ScheduleWindow(BaseModel):
     @field_validator("days")
     @classmethod
     def _valid_days(cls, days):
+        if not days:
+            raise ValueError("a schedule window needs at least one day")
         if any(d < 0 or d > 6 for d in days):
             raise ValueError("days must be 0 (Monday) .. 6 (Sunday)")
         return sorted(set(days))
+
+    @model_validator(mode="after")
+    def _has_duration(self) -> "ScheduleWindow":
+        if self.start == self.end:
+            raise ValueError("a schedule window cannot start and end at the same time")
+        return self
 
 
 class ArmedScheduleSchema(BaseModel):
@@ -50,16 +71,39 @@ class ArmedScheduleSchema(BaseModel):
     windows: list[ScheduleWindow] = Field(default_factory=list, max_length=14)
     tz: str = Field(default="UTC", max_length=64)
 
+    @field_validator("tz")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
+            raise ValueError(f"unknown timezone '{value}'") from exc
+        return value
+
+    @model_validator(mode="after")
+    def _schedule_has_windows(self) -> "ArmedScheduleSchema":
+        if self.mode == "schedule" and not self.windows:
+            raise ValueError("a schedule needs at least one window")
+        return self
+
 
 class ZoneCreate(BaseModel):
-    name: str = Field(..., max_length=100)
-    points: list[ZonePoint] = Field(..., min_length=3)
-    threshold_sec: float = Field(default=5.0, ge=0.5)
-    color: list[int] = Field(default=[0, 255, 255])
+    name: ZoneName
+    points: list[ZonePoint] = Field(..., min_length=3, max_length=MAX_ZONE_POINTS)
+    threshold_sec: float = Field(default=5.0, ge=0.5, le=MAX_DWELL_SECONDS)
+    color: list[ColorChannel] = Field(default=[0, 255, 255], min_length=3, max_length=3)
     camera_ids: Optional[list[str]] = None
     zone_type: ZoneType = "restricted"
     armed_schedule: ArmedScheduleSchema = Field(default_factory=ArmedScheduleSchema)
     allowed_classes: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("points")
+    @classmethod
+    def _encloses_an_area(cls, points: list[ZonePoint]) -> list[ZonePoint]:
+        doubled = sum(a.x * b.y - b.x * a.y for a, b in zip(points, points[1:] + points[:1]))
+        if abs(doubled) / 2.0 < MIN_ZONE_AREA:
+            raise ValueError("zone must enclose an area; these points lie on one line")
+        return points
 
 
 class ZoneResponse(BaseModel):
@@ -198,7 +242,7 @@ async def create_zone(
 
 @router.delete("/{zone_id}", status_code=204)
 async def delete_zone(
-    zone_id: int,
+    zone_id: ZoneId,
     request: Request,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -213,7 +257,7 @@ async def delete_zone(
 
 @router.put("/{zone_id}", response_model=ZoneResponse)
 async def update_zone(
-    zone_id: int,
+    zone_id: ZoneId,
     data: ZoneCreate,
     request: Request,
     current_user: User = Depends(require_admin),

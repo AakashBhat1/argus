@@ -1,37 +1,55 @@
 """Parking service API schemas."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_serializer, field_validator
 
+from app.services.gate_roi import gate_roi_problem
 from app.utils import iso_utc
 from argus_common.net import redact_url
-from argus_vision.schemas import CameraCalibrationSchema
+from argus_vision.schemas import (
+    CameraCalibrationSchema,
+    CameraFps,
+    CameraLocation,
+    CameraName,
+    CameraResolution,
+    CameraStreamUrl,
+)
 
 ParkingCameraRole = Literal["gate_entry", "gate_exit", "parking"]
 
 
+def _valid_gate_roi(value: list) -> list:
+    problem = gate_roi_problem(value) if value else None
+    if problem:
+        raise ValueError(problem)
+    return value
+
+
+GateRoi = Annotated[list, AfterValidator(_valid_gate_roi)]
+
+
 class CameraCreate(BaseModel):
-    name: str = Field(..., max_length=255)
-    location: str = Field(..., max_length=500)
-    stream_url: str = Field(..., max_length=1000)
-    resolution: str = "1280x720"
-    fps: int = Field(default=30, ge=1, le=120)
+    name: CameraName
+    location: CameraLocation
+    stream_url: CameraStreamUrl
+    resolution: CameraResolution = "1280x720"
+    fps: CameraFps = 30
     role: ParkingCameraRole = "parking"
-    gate_roi: Optional[list] = None
+    gate_roi: Optional[GateRoi] = None
     calibration: Optional[CameraCalibrationSchema] = None
 
 
 class CameraUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=255)
-    location: Optional[str] = Field(default=None, max_length=500)
-    stream_url: Optional[str] = Field(default=None, max_length=1000)
-    resolution: Optional[str] = None
-    fps: Optional[int] = Field(default=None, ge=1, le=120)
+    name: Optional[CameraName] = None
+    location: Optional[CameraLocation] = None
+    stream_url: Optional[CameraStreamUrl] = None
+    resolution: Optional[CameraResolution] = None
+    fps: Optional[CameraFps] = None
     is_active: Optional[bool] = None
     role: Optional[ParkingCameraRole] = None
-    gate_roi: Optional[list] = None
+    gate_roi: Optional[GateRoi] = None
     calibration: Optional[CameraCalibrationSchema] = None
 
 
@@ -145,6 +163,8 @@ class ParkingSlotPreviewResponse(BaseModel):
     width: int
     height: int
     slots: list[ParkingSlotPreviewReading]
+    # False when no detector was available, so "free" only means "not checked".
+    vehicle_detection_ran: bool
 
 
 class ReleaseSpaceResponse(BaseModel):

@@ -14,6 +14,7 @@ from typing import Optional
 
 import cv2
 import httpx
+import numpy as np
 
 from app.config import get_settings
 from app.models import Camera
@@ -33,6 +34,7 @@ from argus_vision.sources import (
     mediamtx_read_url,
     open_capture as _open_capture,
 )
+from argus_vision.stream_runtime import FramePacer, frame_skip_ceiling, wait_for_stream_exit
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,7 @@ class ParkingStream:
             self._settings.MEDIAMTX_ENABLED and _mediamtx_can_pull(self.stream_url)
         )
         self._frame_skip = max(1, int(self._settings.FRAME_SKIP))
+        self._pacer: Optional[FramePacer] = None
         self._last_track_count = 0
 
     @property
@@ -108,22 +111,43 @@ class ParkingStream:
 
     async def stop(self) -> None:
         self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        if self._cap is not None and self._cap.isOpened():
-            self._cap.release()
-        self._pipeline.reset()
+        finished = await wait_for_stream_exit(self._task, self.camera_name) if self._task else True
+        await self._release_capture()
+        if finished:
+            await asyncio.get_running_loop().run_in_executor(None, self._pipeline.reset)
+        else:
+            logger.warning("Skipping pipeline reset for %s: a worker is still using it", self.camera_name)
 
     def update_gate(self, role: Optional[str], gate_roi) -> None:
         self.role = (role or self.role).lower()
         self._pipeline.update_gate(self.role, gate_roi)
 
-    async def _read(self, loop):
-        return await loop.run_in_executor(None, self._cap.read)
+    async def _release_capture(self) -> None:
+        capture, self._cap = self._cap, None
+        if capture is not None:
+            # Off the event loop: a release waits for any read in progress.
+            await asyncio.get_running_loop().run_in_executor(None, capture.release)
+
+    def _adopt_source_rate(self) -> None:
+        """Size frame skipping and file pacing to what this source delivers."""
+        source_fps = float(self._cap.get(cv2.CAP_PROP_FPS))
+        ceiling = frame_skip_ceiling(source_fps, self._settings.MIN_ANALYSIS_FPS)
+        self._frame_skip = min(self._frame_skip, ceiling)
+        if self.is_video_source:
+            self._pacer = FramePacer(source_fps)
+
+    async def _next_frame(self, loop) -> tuple[bool, Optional[np.ndarray]]:
+        """Advance one frame, decoding to an image only if it will be analysed."""
+        if self._pacer is not None:
+            delay = self._pacer.next_delay()
+            if delay > 0:
+                await asyncio.sleep(delay)
+        analyse = (self._frame_count + 1) % self._frame_skip == 0
+        if self._pacer is not None and self._pacer.should_drop():
+            analyse = False
+        if analyse:
+            return await loop.run_in_executor(None, self._cap.read)
+        return await loop.run_in_executor(None, self._cap.grab), None
 
     async def _process_loop(self) -> None:
         loop = asyncio.get_running_loop()
@@ -134,11 +158,12 @@ class ParkingStream:
             self._running = False
             return
         try:
+            self._adopt_source_rate()
             while self._running:
-                ok, frame = await self._read(loop)
+                ok, frame = await self._next_frame(loop)
                 if not ok:
                     if self.is_video_source:
-                        self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        await loop.run_in_executor(None, self._cap.set, cv2.CAP_PROP_POS_FRAMES, 0)
                         continue
                     self._reconnect_attempts += 1
                     if self._reconnect_attempts > self._max_reconnect_attempts:
@@ -147,12 +172,12 @@ class ParkingStream:
                         break
                     backoff = min(self._reconnect_base_delay * (2 ** self._reconnect_attempts), 30)
                     await asyncio.sleep(backoff)
-                    self._cap.release()
+                    await self._release_capture()
                     self._cap = await loop.run_in_executor(None, _open_capture, self._capture_url)
                     continue
                 self._reconnect_attempts = 0
                 self._frame_count += 1
-                if self._frame_count % self._frame_skip != 0:
+                if frame is None:
                     continue
                 await self._process_frame(loop, frame)
                 await asyncio.sleep(0.001)
@@ -161,8 +186,7 @@ class ParkingStream:
         except Exception:
             logger.exception("Parking stream error for %s", self.camera_name)
         finally:
-            if self._cap is not None and self._cap.isOpened():
-                self._cap.release()
+            await self._release_capture()
 
     async def _process_frame(self, loop, frame) -> None:
         started = time.perf_counter()
@@ -234,6 +258,10 @@ class ParkingStreamManager:
 
     def set_inference_pool(self, pool) -> None:
         self._inference_pool = pool
+
+    @property
+    def inference_pool(self):
+        return self._inference_pool
 
     def get_stream(self, camera_id: str) -> Optional[ParkingStream]:
         return self._streams.get(str(camera_id))

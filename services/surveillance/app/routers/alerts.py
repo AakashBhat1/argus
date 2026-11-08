@@ -17,7 +17,7 @@ async def list_alerts(
     camera_id: Optional[str] = None,
     status: Optional[str] = None,
     severity: Optional[str] = None,
-    limit: int = Query(default=50, le=500),
+    limit: int = Query(default=50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):

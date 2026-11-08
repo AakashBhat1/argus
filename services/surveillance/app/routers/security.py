@@ -22,6 +22,10 @@ from app.services import audit
 router = APIRouter(prefix="/security", tags=["security"])
 
 
+# DeepSORT counts up from 1, so anything larger has never been a track.
+MAX_TRACK_ID = 2**31 - 1
+
+
 class ArmRequest(BaseModel):
     mode: Literal["armed", "disarmed", "auto"]
 
@@ -34,7 +38,7 @@ class SiteGrantRequest(BaseModel):
 
 class TrackGrantRequest(BaseModel):
     camera_id: str = Field(..., max_length=64)
-    track_id: int = Field(..., ge=0)
+    track_id: int = Field(..., ge=0, le=MAX_TRACK_ID)
     label: str = Field(default="Known person", max_length=120)
     minutes: float = Field(default=15.0, ge=1.0, le=24 * 60)
     note: Optional[str] = Field(default=None, max_length=500)
@@ -44,7 +48,7 @@ class VehicleRegisterRequest(BaseModel):
     """Manual/testing hook mirroring what the gate OCR does automatically."""
 
     camera_id: str = Field(..., max_length=64)
-    track_id: int = Field(..., ge=0)
+    track_id: int = Field(..., ge=0, le=MAX_TRACK_ID)
     plate_text: str = Field(..., min_length=2, max_length=20)
     profile_type: Literal["normal", "vip", "resident", "staff", "blacklist"] = "vip"
     owner_name: Optional[str] = Field(default=None, max_length=120)
