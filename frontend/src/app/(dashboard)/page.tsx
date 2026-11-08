@@ -80,7 +80,7 @@ export default function DashboardPage() {
           subtitle="requires attention" icon={AlertTriangle} color="red" loading={loading} />
         <StatsCard title="Avg Confidence"
           value={`${((performance?.avg_confidence ?? 0) * 100).toFixed(1)}%`}
-          subtitle="model accuracy" icon={Zap} color="purple" loading={loading} />
+          subtitle="mean detector score" icon={Zap} color="purple" loading={loading} />
       </div>
 
       {/* Charts Row */}

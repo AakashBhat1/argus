@@ -62,7 +62,7 @@ export default function PerformancePage() {
         <StatsCard title="Active Streams" value={running.length} subtitle={`of ${streams.length} total`} icon={Wifi} color="blue" />
         <StatsCard title="Avg FPS" value={avgFps.toFixed(1)} subtitle="across running streams" icon={Gauge} color="green" />
         <StatsCard title="Detections/min" value={perf?.detections_per_minute ?? 0} subtitle="current rate" icon={Activity} color="purple" />
-        <StatsCard title="Avg Confidence" value={`${((perf?.avg_confidence ?? 0) * 100).toFixed(1)}%`} subtitle="model accuracy" icon={Cpu} color="teal" />
+        <StatsCard title="Avg Confidence" value={`${((perf?.avg_confidence ?? 0) * 100).toFixed(1)}%`} subtitle="mean detector score" icon={Cpu} color="teal" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">

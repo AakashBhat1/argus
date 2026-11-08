@@ -112,7 +112,7 @@ export default function AnalyticsPage() {
         <StatsCard
           title="Avg Confidence"
           value={`${(avgConf * 100).toFixed(1)}%`}
-          subtitle="detection accuracy"
+          subtitle="mean detector score"
           icon={TrendingUp}
           color="purple"
           loading={loading}
