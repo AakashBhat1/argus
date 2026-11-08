@@ -9,7 +9,7 @@ description = "Shared vision pipeline for Argus: OpenVINO detection, tracking, R
 requires-python = ">=3.11"
 dependencies = [
   "argus-common",
-  "numpy==1.26.4",
+  "numpy==2.4.6",
   "opencv-python-headless==4.9.0.80",
   "openvino==2024.6.0",
   "pydantic-settings==2.1.0",
