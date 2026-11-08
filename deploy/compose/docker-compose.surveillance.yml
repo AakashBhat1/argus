@@ -58,7 +58,7 @@ networks:
 services:
   surveillance-db:
     <<: *hardening
-    image: postgres:15-alpine
+    image: postgres:15-alpine@sha256:aae6554de426ae1990f1a939ff183a0299146cf7142a6f4c379c3357af9cc2d8
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     environment:
       POSTGRES_USER: surveillance
@@ -136,7 +136,7 @@ services:
 
   mediamtx:
     <<: *hardening
-    image: bluenviron/mediamtx:1.21.1
+    image: bluenviron/mediamtx:1.21.1@sha256:5ce2a948eb68df06ce2e13870db8df8e30d516ac4dc40e04bfe8aee3bdf7be40
     environment:
       MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_API_PASSWORD}
       MTX_AUTHINTERNALUSERS_1_PASS: ${MEDIAMTX_PUBLISH_PASSWORD:?set MEDIAMTX_PUBLISH_PASSWORD}
@@ -153,7 +153,7 @@ services:
 
   edge:
     <<: *hardening
-    image: nginx:1.27-alpine
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     # DAC_READ_SEARCH: the root master must read the mounted keys, which are
     # owned by the services' uid (deploy/pki.sh). Workers run as nginx and
     # lose all capabilities when they switch uid.
@@ -208,7 +208,7 @@ services:
       retries: 3
 
   certbot:
-    image: certbot/certbot:v2.11.0
+    image: certbot/certbot:v2.11.0@sha256:ddf9e5d226a56e886986838fa0ebedc0237511c78664352e8d0f4346ee022cd8
     profiles: ["tls"]
     volumes:
       - certbot_conf:/etc/letsencrypt
