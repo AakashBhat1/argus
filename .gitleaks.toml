@@ -1,0 +1,25 @@
+# gitleaks configuration: the default rules plus an allowlist for values that
+# are public placeholders, never real secrets. Anything else that matches is
+# a finding: rotate the secret (removing it from history is not enough).
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known public placeholders and CI/test-only values"
+regexTarget = "match"
+regexes = [
+  '''mtx_api_change_me''',
+  '''mtx_publish_change_me''',
+  '''replaced-by-env''',
+  '''change[-_]me''',
+  '''change-me-in-prod(uction)?''',
+  '''ci-only-secret-key-that-is-at-least-32-characters''',
+  '''your-(strong-)?secret-here''',
+]
+
+[[allowlists]]
+description = "Test suites generate throwaway keys and tokens at runtime"
+paths = [
+  '''(^|/)tests/''',
+]

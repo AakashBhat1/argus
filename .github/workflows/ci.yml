@@ -12,8 +12,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  python-static:
+    name: python lint + bandit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install linters
+        run: python -m pip install "ruff==0.16.8" "bandit==1.9.4"
+      - name: Ruff (pyflakes rules)
+        run: ruff check --select F packages services scripts
+      - name: Bandit (medium+ severity, medium+ confidence)
+        run: >-
+          bandit -q -ll -ii -r
+          packages/argus_common/argus_common
+          packages/argus_vision/argus_vision
+          services/surveillance/app
+          services/parking/app
+
   python-services:
-    name: ${{ matrix.service }} tests + migrations
+    name: ${{ matrix.service }} tests + migrations + audit
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -50,10 +70,32 @@ jobs:
       - name: Run tests
         run: python -m pytest -m "not requires_model"
 
-      - name: Verify Alembic upgrade and downgrade
+      - name: Verify Alembic upgrade, downgrade and re-upgrade
         run: |
           alembic upgrade head
           alembic downgrade base
+          alembic upgrade head
+
+      - name: Audit installed dependencies (pip-audit)
+        working-directory: .
+        # setuptools 80.9.0 is held back on purpose: deep-sort-realtime imports
+        # pkg_resources, which setuptools >= 81 no longer ships. Both advisories
+        # are build/install-time only (MANIFEST.in glob matching while building
+        # an sdist; namespace_packages.txt path escape when installing a legacy
+        # wheel on Windows). The images install pinned wheels on Linux, so
+        # neither path runs in production.
+        run: |
+          python -m pip install "pip-audit==2.10.1"
+          pip-audit --skip-editable --progress-spinner off \
+            --ignore-vuln PYSEC-2026-3447 \
+            --ignore-vuln GHSA-xmj3-9gf7-h52w
+
+      - name: Audit torch (pip-audit skips +cpu local versions)
+        working-directory: .
+        run: |
+          python -m pip freeze | grep -E '^(torch|torchvision)==' | sed 's/+cpu//' > "$RUNNER_TEMP/torch-pins.txt"
+          cat "$RUNNER_TEMP/torch-pins.txt"
+          pip-audit --no-deps --progress-spinner off -r "$RUNNER_TEMP/torch-pins.txt"
 
   shared-packages:
     runs-on: ubuntu-latest
@@ -65,10 +107,14 @@ jobs:
           cache: pip
           cache-dependency-path: packages/*/pyproject.toml
       - name: Install argus_common
-        run: python -m pip install -e "packages/argus_common[dev]"
+        run: python -m pip install --upgrade pip && python -m pip install -e "packages/argus_common[dev]"
       - name: Test argus_common
         working-directory: packages/argus_common
         run: python -m pytest -q
+      - name: Audit installed dependencies (pip-audit)
+        run: |
+          python -m pip install "pip-audit==2.10.1"
+          pip-audit --skip-editable --progress-spinner off
 
   deploy-config:
     name: deployment config (compose, PKI, nginx)
@@ -93,9 +139,100 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run lint -- --max-warnings=0
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+
+  images:
+    name: image ${{ matrix.image }} (build, smoke, scan)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: surveillance
+            context: .
+            dockerfile: services/surveillance/Dockerfile
+            port: 8000
+            health: /api/v1/health
+            app_dir: /app/services/surveillance
+          - image: parking
+            context: .
+            dockerfile: services/parking/Dockerfile
+            port: 8100
+            health: /api/v1/parking/health
+            app_dir: /app/services/parking
+          - image: frontend
+            context: frontend
+            dockerfile: frontend/Dockerfile
+            port: 3001
+            health: /
+            app_dir: ""
+    steps:
+      - uses: actions/checkout@v6
+
+      # Third-party actions are pinned by commit (trivy-action tags were
+      # force-pushed in a 2026 supply-chain incident). Dependabot bumps them.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          tags: argus-${{ matrix.image }}:ci
+          load: true
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Write a stub detector model
+        if: matrix.app_dir != ''
+        run: |
+          mkdir -p "$RUNNER_TEMP/models"
+          chmod 777 "$RUNNER_TEMP/models"
+          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+            -v "$PWD/scripts/dev:/stub:ro" -v "$RUNNER_TEMP/models:/models" \
+            argus-${{ matrix.image }}:ci python /stub/make_stub_detector.py /models/yolov8n.xml
+
+      - name: Smoke test (read-only rootfs, no capabilities)
+        env:
+          IMAGE: argus-${{ matrix.image }}:ci
+          PORT: ${{ matrix.port }}
+          HEALTH: ${{ matrix.health }}
+          APP_DIR: ${{ matrix.app_dir }}
+        run: |
+          args=(--read-only --cap-drop ALL --security-opt no-new-privileges
+                --tmpfs /tmp:rw,size=256m -p "127.0.0.1:${PORT}:${PORT}")
+          if [ -n "$APP_DIR" ]; then
+            args+=(-e DEBUG=true -e ARGUS_ENV_FILE=
+                   -e DATABASE_URL=sqlite+aiosqlite:////tmp/smoke.db
+                   -v "$RUNNER_TEMP/models:${APP_DIR}/models:ro"
+                   --tmpfs "${APP_DIR}/video:rw" --tmpfs "${APP_DIR}/data:rw"
+                   --tmpfs "${APP_DIR}/intrusion_monitor:rw")
+          fi
+          docker run -d --name smoke "${args[@]}" "$IMAGE"
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:${PORT}${HEALTH}" >/dev/null; then
+              echo "healthy"; docker logs smoke 2>&1 | tail -20; exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' smoke)" != "true" ]; then break; fi
+            sleep 3
+          done
+          echo "::error::${IMAGE} did not become healthy"
+          docker logs smoke
+          exit 1
+
+      - name: Trivy scan (report-only until the baseline is clean)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: argus-${{ matrix.image }}:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: table
+          exit-code: "0"

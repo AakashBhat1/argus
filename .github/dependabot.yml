@@ -1,0 +1,58 @@
+version: 2
+
+# Weekly updates. Minor and patch bumps are grouped per ecosystem so they
+# arrive as one PR; majors arrive one per PR so each can be reviewed.
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /services/surveillance
+      - /services/parking
+      - /packages/argus_common
+      - /packages/argus_vision
+    schedule:
+      interval: weekly
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # deep-sort-realtime needs pkg_resources, which setuptools >= 81 removed.
+      - dependency-name: setuptools
+        versions: [">=81"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  # Base images are pinned by digest; Dependabot bumps tag and digest together.
+  - package-ecosystem: docker
+    directories:
+      - /services/surveillance
+      - /services/parking
+      - /frontend
+    schedule:
+      interval: weekly
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /deploy/compose
+    schedule:
+      interval: weekly
+    groups:
+      compose-minor-patch:
+        update-types: [minor, patch]
