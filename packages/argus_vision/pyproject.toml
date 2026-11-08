@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
   "argus-common",
   "numpy==1.26.4",
-  "opencv-python-headless==4.9.0.80",
+  "opencv-python-headless==5.0.0.93",
   "openvino==2024.6.0",
   "pydantic-settings==2.1.0",
   # deep-sort-realtime imports pkg_resources, retained by this setuptools line.
