@@ -1,5 +1,5 @@
 # ── Stage 1: Install dependencies ───────────────────────────────────────────
-FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS deps
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS deps
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci
 
 # ── Stage 2: Build ───────────────────────────────────────────────────────────
-FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS builder
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS builder
 
 WORKDIR /app
 
@@ -36,7 +36,7 @@ COPY . .
 RUN npm run build
 
 # ── Stage 3: Production runner ───────────────────────────────────────────────
-FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS runner
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS runner
 
 WORKDIR /app
 
