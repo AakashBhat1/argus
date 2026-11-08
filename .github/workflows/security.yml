@@ -28,8 +28,8 @@ jobs:
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
           tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           cd "$RUNNER_TEMP"
-          curl -fsSLO "$base/$tarball"
-          curl -fsSLO "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          curl -fsSLO --retry 5 --retry-all-errors --retry-delay 3 "$base/$tarball"
+          curl -fsSLO --retry 5 --retry-all-errors --retry-delay 3 "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
           grep " ${tarball}\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
           tar -xzf "$tarball" gitleaks
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
