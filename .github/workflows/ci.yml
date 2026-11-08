@@ -16,7 +16,7 @@ jobs:
     name: python lint + bandit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -49,7 +49,7 @@ jobs:
       SECRET_KEY: "ci-only-secret-key-that-is-at-least-32-characters"
       DATABASE_URL: "sqlite+aiosqlite:///./ci_migrations.db"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
@@ -100,7 +100,7 @@ jobs:
   shared-packages:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -120,7 +120,7 @@ jobs:
     name: deployment config (compose, PKI, nginx)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Lint deployment scripts
         run: shellcheck deploy/pki.sh deploy/check.sh scripts/generate-secrets.sh scripts/setup-tls.sh
       - name: Render compose files and nginx -t every edge with a throwaway PKI
@@ -132,7 +132,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -174,7 +174,7 @@ jobs:
             health: /
             app_dir: ""
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Third-party actions are pinned by commit (trivy-action tags were
       # force-pushed in a 2026 supply-chain incident). Dependabot bumps them.
