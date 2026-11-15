@@ -298,7 +298,7 @@ services:
   certbot:
     mem_limit: ${CERTBOT_MEM_LIMIT:-256m}
     pids_limit: 64
-    image: certbot/certbot:v2.11.0@sha256:ddf9e5d226a56e886986838fa0ebedc0237511c78664352e8d0f4346ee022cd8
+    image: certbot/certbot:v5.10.0@sha256:c5698da859429ccee0fcc299a8000368198222d1f9e789ab6e388b491e8ce06d
     profiles: ["tls"]
     volumes:
       - certbot_conf:/etc/letsencrypt
