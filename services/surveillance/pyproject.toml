@@ -29,7 +29,7 @@ dependencies = [
   "torchvision==0.29.1",
   "Pillow==13.0.0",
   "python-dotenv==1.2.4",
-  "aiofiles==23.2.1",
+  "aiofiles==25.1.0",
   "huggingface-hub>=0.20.0",
   "transformers>=4.40.0",
   "passlib[bcrypt]==1.7.4",
