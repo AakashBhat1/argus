@@ -196,7 +196,7 @@ services:
     mem_limit: ${MEDIAMTX_MEM_LIMIT:-512m}
     pids_limit: 256
     <<: *hardening
-    image: bluenviron/mediamtx:1.21.3@sha256:59e43552f3be43695b70c19424dc2a42fcec18075f88d91561a24ac5d70a586c
+    image: bluenviron/mediamtx:1.21.4@sha256:c730bccdbc8739f8f0c13cefe9bea8b61926f599b88fa4d0d229baa91846c7bc
     environment:
       MTX_AUTHINTERNALUSERS_0_PASS: ${MEDIAMTX_API_PASSWORD}
       MTX_AUTHINTERNALUSERS_1_PASS: ${MEDIAMTX_PUBLISH_PASSWORD:?set MEDIAMTX_PUBLISH_PASSWORD}
@@ -218,7 +218,7 @@ services:
     mem_limit: ${OLLAMA_MEM_LIMIT:-8g}
     pids_limit: 512
     <<: *hardening
-    image: ollama/ollama:0.40.14@sha256:ebaef4f4c5d93660e1f25f8ad085a112f51ccfb0e8458073e71793959dba91c9
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     volumes: [ollama_data:/root/.ollama]
     networks: [backplane]
@@ -227,7 +227,7 @@ services:
     mem_limit: ${OLLAMA_MODEL_MEM_LIMIT:-256m}
     pids_limit: 64
     <<: *hardening
-    image: ollama/ollama:0.40.14@sha256:ebaef4f4c5d93660e1f25f8ad085a112f51ccfb0e8458073e71793959dba91c9
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     restart: "on-failure:5"
     environment:
       OLLAMA_HOST: http://ollama:11434
